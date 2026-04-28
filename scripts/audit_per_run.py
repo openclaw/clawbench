@@ -141,9 +141,9 @@ def main():
             for run_idx in range(3):
                 key = (task, run_idx)
                 a = data["archived"].get(key)
-                l = data["logged"].get(key)
+                logged = data["logged"].get(key)
                 err = (key in data["errors"])
-                task_runs.append({"archived": a, "logged": l, "harness_err": err})
+                task_runs.append({"archived": a, "logged": logged, "harness_err": err})
             task_runs_by_model[pretty] = task_runs
 
         # Compute cross-model stats
@@ -159,7 +159,8 @@ def main():
                     all_scores.append(a["run_score"])
                     all_cs.append(a["c"])
                     all_outputs.append(a["has_assistant_text"])
-                    if a["judge_infra_failed"]: all_judge_infra += 1
+                    if a["judge_infra_failed"]:
+                        all_judge_infra += 1
                 elif r["logged"]:
                     all_scores.append(r["logged"]["score"])
                 if r["harness_err"]:
@@ -222,13 +223,15 @@ def main():
             for run_idx in range(3):
                 key = (task, run_idx)
                 a = data["archived"].get(key)
-                l = data["logged"].get(key)
+                logged = data["logged"].get(key)
                 if a:
                     any_attempted = True
-                    if a["run_score"] > 0.01: all_three_zero = False
-                elif l:
+                    if a["run_score"] > 0.01:
+                        all_three_zero = False
+                elif logged:
                     any_attempted = True
-                    if l["score"] > 0.01: all_three_zero = False
+                    if logged["score"] > 0.01:
+                        all_three_zero = False
                 else:
                     all_three_zero = False  # can't confirm
                     any_attempted = False

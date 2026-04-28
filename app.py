@@ -18,6 +18,7 @@ import logging
 import os
 import threading
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import gradio as gr
@@ -27,6 +28,7 @@ from clawbench.hub import (
     load_submission_rows_from_parquet,
     resolve_dataset_repo,
 )
+from clawbench.queue import JobQueue, SubmissionRequest
 from clawbench.submission_models import (
     build_preset_submission_specs,
     CUSTOM_PRESET_LABEL,
@@ -44,7 +46,16 @@ RESULTS_DIR = Path("/data/results") if Path("/data").exists() else Path("data/re
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 HF_DATASET_TOKEN = os.environ.get("HF_TOKEN", "")
 HF_DATASET_REPO = resolve_dataset_repo(HF_DATASET_TOKEN)
-_LEADERBOARD_CACHE: tuple[float, pd.DataFrame] | None = None
+
+
+@dataclass
+class _LeaderboardCache:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    loaded_at: float = 0.0
+    frame: pd.DataFrame | None = None
+
+
+_LEADERBOARD_CACHE = _LeaderboardCache()
 
 
 def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
@@ -68,10 +79,6 @@ ENABLE_BULK_SUBMIT = os.environ.get("CLAWBENCH_ENABLE_BULK_SUBMIT", "").strip().
 
 # ---------------------------------------------------------------------------
 # Background worker (starts in a thread)
-# ---------------------------------------------------------------------------
-
-from clawbench.queue import JobQueue, SubmissionRequest
-
 queue = JobQueue()
 
 
@@ -98,20 +105,21 @@ logger.info("Background eval worker started")
 
 
 def load_leaderboard() -> pd.DataFrame:
-    global _LEADERBOARD_CACHE
-
     now = time.monotonic()
-    if (
-        _LEADERBOARD_CACHE is not None
-        and LEADERBOARD_CACHE_SECONDS > 0
-        and now - _LEADERBOARD_CACHE[0] < LEADERBOARD_CACHE_SECONDS
-    ):
-        return _LEADERBOARD_CACHE[1].copy()
+    with _LEADERBOARD_CACHE.lock:
+        if (
+            _LEADERBOARD_CACHE.frame is not None
+            and LEADERBOARD_CACHE_SECONDS > 0
+            and now - _LEADERBOARD_CACHE.loaded_at < LEADERBOARD_CACHE_SECONDS
+        ):
+            return _LEADERBOARD_CACHE.frame.copy()
 
     frame = _load_leaderboard_uncached()
     if LEADERBOARD_CACHE_SECONDS > 0:
-        _LEADERBOARD_CACHE = (now, frame.copy())
-    return frame
+        with _LEADERBOARD_CACHE.lock:
+            _LEADERBOARD_CACHE.loaded_at = time.monotonic()
+            _LEADERBOARD_CACHE.frame = frame.copy()
+    return frame.copy()
 
 
 def _load_leaderboard_uncached() -> pd.DataFrame:

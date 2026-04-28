@@ -16,6 +16,7 @@ import datetime
 import json
 import logging
 import os
+import tempfile
 from enum import Enum
 from pathlib import Path
 
@@ -144,7 +145,25 @@ class JobQueue:
         """Persist queue state to local disk."""
         jobs_file = LOCAL_QUEUE_DIR / "jobs.json"
         data = [job.model_dump() for job in self._jobs.values()]
-        jobs_file.write_text(json.dumps(data, indent=2))
+        payload = json.dumps(data, indent=2) + "\n"
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=LOCAL_QUEUE_DIR,
+                prefix="jobs.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp_file:
+                tmp_file.write(payload)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+                tmp_path = Path(tmp_file.name)
+            tmp_path.replace(jobs_file)
+        finally:
+            if tmp_path is not None and tmp_path.exists():
+                tmp_path.unlink()
 
     async def submit(self, request: SubmissionRequest) -> Job:
         """Submit a new evaluation job."""
@@ -353,6 +372,10 @@ class JobQueue:
 
     async def _sync_to_hub(self) -> None:
         """Push queue state to HF Dataset for persistence across restarts."""
+        await asyncio.to_thread(self._sync_to_hub_blocking)
+
+    def _sync_to_hub_blocking(self) -> None:
+        """Blocking Hub upload implementation, kept off the event loop."""
         if not HF_TOKEN:
             return
         try:

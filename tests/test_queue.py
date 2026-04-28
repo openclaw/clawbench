@@ -1,4 +1,5 @@
 import datetime
+import json
 
 import pytest
 
@@ -10,6 +11,7 @@ from clawbench.hub import (
     submission_parquet_files,
 )
 from clawbench.queue import Job, JobQueue, JobStatus, SubmissionRequest
+import clawbench.queue as queue_module
 
 
 def test_submission_request_defaults_to_single_parallel_lane():
@@ -17,6 +19,27 @@ def test_submission_request_defaults_to_single_parallel_lane():
 
     assert request.max_parallel_lanes == 1
     assert request.runs_per_task == 3
+
+
+def test_save_local_replaces_queue_file_atomically(tmp_path, monkeypatch):
+    monkeypatch.setattr(queue_module, "LOCAL_QUEUE_DIR", tmp_path)
+    monkeypatch.setattr(queue_module, "HF_TOKEN", "")
+    queue = JobQueue()
+    queue._jobs = {
+        "job-1": Job(
+            job_id="job-1",
+            status=JobStatus.PENDING,
+            submitted_at="2026-04-09T00:00:01+00:00",
+            request=SubmissionRequest(model="anthropic/claude-sonnet-4-6"),
+        )
+    }
+
+    queue._save_local()
+
+    jobs_file = tmp_path / "jobs.json"
+    assert jobs_file.exists()
+    assert Job(**json.loads(jobs_file.read_text(encoding="utf-8"))[0]).job_id == "job-1"
+    assert not list(tmp_path.glob("jobs.*.tmp"))
 
 
 @pytest.mark.asyncio
