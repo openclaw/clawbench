@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 import gradio as gr
@@ -33,7 +34,6 @@ from clawbench.submission_models import (
     PRESET_AUDIENCE_CHOICES,
     PRESET_MODEL_MAP,
     preset_labels_for_audience,
-    preset_models_for_audience,
     resolve_model_selection,
 )
 
@@ -44,6 +44,7 @@ RESULTS_DIR = Path("/data/results") if Path("/data").exists() else Path("data/re
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 HF_DATASET_TOKEN = os.environ.get("HF_TOKEN", "")
 HF_DATASET_REPO = resolve_dataset_repo(HF_DATASET_TOKEN)
+_LEADERBOARD_CACHE: tuple[float, pd.DataFrame] | None = None
 
 
 def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
@@ -62,6 +63,7 @@ MAX_RUNS_PER_SUBMISSION = _env_int("CLAWBENCH_MAX_RUNS_PER_SUBMISSION", 3, minim
 MAX_LANES_PER_SUBMISSION = _env_int("CLAWBENCH_MAX_LANES_PER_SUBMISSION", 4, minimum=1, maximum=8)
 DEFAULT_RUNS_PER_TASK = _env_int("CLAWBENCH_DEFAULT_RUNS_PER_TASK", 3, minimum=1, maximum=MAX_RUNS_PER_SUBMISSION)
 DEFAULT_PARALLEL_LANES = _env_int("CLAWBENCH_DEFAULT_PARALLEL_LANES", 1, minimum=1, maximum=MAX_LANES_PER_SUBMISSION)
+LEADERBOARD_CACHE_SECONDS = _env_int("CLAWBENCH_LEADERBOARD_CACHE_SECONDS", 60, minimum=0, maximum=3600)
 ENABLE_BULK_SUBMIT = os.environ.get("CLAWBENCH_ENABLE_BULK_SUBMIT", "").strip().lower() in {"1", "true", "yes", "on"}
 
 # ---------------------------------------------------------------------------
@@ -96,6 +98,23 @@ logger.info("Background eval worker started")
 
 
 def load_leaderboard() -> pd.DataFrame:
+    global _LEADERBOARD_CACHE
+
+    now = time.monotonic()
+    if (
+        _LEADERBOARD_CACHE is not None
+        and LEADERBOARD_CACHE_SECONDS > 0
+        and now - _LEADERBOARD_CACHE[0] < LEADERBOARD_CACHE_SECONDS
+    ):
+        return _LEADERBOARD_CACHE[1].copy()
+
+    frame = _load_leaderboard_uncached()
+    if LEADERBOARD_CACHE_SECONDS > 0:
+        _LEADERBOARD_CACHE = (now, frame.copy())
+    return frame
+
+
+def _load_leaderboard_uncached() -> pd.DataFrame:
     rows = []
 
     # Load from HF Dataset via direct parquet reads. This avoids
