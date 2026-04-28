@@ -43,6 +43,12 @@ def cli(verbose: bool) -> None:
     default="",
     help="Optional advisory LLM judge model (does not affect official score)",
 )
+@click.option(
+    "--judge-affects-score",
+    is_flag=True,
+    envvar="CLAWBENCH_JUDGE_AFFECTS_SCORE",
+    help="Opt in to experimental judge-weighted scoring. Official scoring keeps judge advisory.",
+)
 @click.option("--runs", "-n", default=3, show_default=True, help="Runs per task (reliability uses all runs)")
 @click.option("--tier", type=click.Choice(["tier1", "tier2", "tier3", "tier4", "tier5"]), help="Filter tier")
 @click.option("--scenario", type=click.Choice(SCENARIO_CHOICES), help="Filter query scenario")
@@ -121,6 +127,7 @@ def run(
     adapter: str,
     gateway_token: str,
     judge_model: str,
+    judge_affects_score: bool,
     runs: int,
     tier: str | None,
     scenario: str | None,
@@ -146,6 +153,7 @@ def run(
         model=model,
         adapter=adapter,
         judge_model=judge_model,
+        judge_affects_score=judge_affects_score,
         runs_per_task=runs,
         tier=tier,
         scenario=scenario,

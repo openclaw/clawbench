@@ -83,6 +83,7 @@ class BenchmarkHarness:
         concurrency: int = 1,
         browser_concurrency: int = 1,
         adapter: str = "openclaw",
+        judge_affects_score: bool = False,
     ) -> None:
         self.gateway_config = gateway_config
         self.model = model
@@ -94,6 +95,7 @@ class BenchmarkHarness:
         self.artifact_type = artifact_type
         self.prompt_variant = prompt_variant
         self.judge_model = judge_model
+        self.judge_affects_score = judge_affects_score
         self.pool = pool
         self.subsets = subsets or []
         self.capabilities = capabilities or []
@@ -408,6 +410,7 @@ class BenchmarkHarness:
                     duration_ms=duration_ms,
                     runtime_values=runtime_values,
                     judge_model=self.judge_model,
+                    judge_affects_score=self.judge_affects_score,
                 )
                 timings["score"] = round(time.monotonic() - t_score_start, 2)
                 timings["total"] = round(time.monotonic() - t_run_start, 2)
@@ -742,6 +745,7 @@ class BenchmarkHarness:
                 "artifact_type": self.artifact_type or "all",
                 "prompt_variant": self.prompt_variant,
                 "judge_model": self.judge_model,
+                "judge_affects_score": self.judge_affects_score,
                 "adapter": self.adapter,
                 "known_adapters": list(KNOWN_ADAPTERS),
                 "executable_adapters": sorted(EXECUTABLE_ADAPTERS),

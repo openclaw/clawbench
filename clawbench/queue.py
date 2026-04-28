@@ -45,6 +45,7 @@ class SubmissionRequest(BaseModel):
     provider: str = ""  # e.g. "anthropic"
     api_key_env: str = ""  # Env var name holding the API key (NOT the key itself)
     judge_model: str = ""
+    judge_affects_score: bool = False
     runs_per_task: int = Field(default=3, ge=1, le=10)
     max_parallel_lanes: int = Field(default=1, ge=1, le=8)
     tier: str | None = None  # Filter to a specific tier
@@ -59,6 +60,7 @@ class SubmissionRequest(BaseModel):
             "model": self.model.strip(),
             "provider": self.provider.strip(),
             "judge_model": self.judge_model.strip(),
+            "judge_affects_score": self.judge_affects_score,
             "runs_per_task": self.runs_per_task,
             "max_parallel_lanes": self.max_parallel_lanes,
             "tier": self.tier or "",

@@ -17,6 +17,18 @@ def test_submission_request_defaults_to_single_parallel_lane():
 
     assert request.max_parallel_lanes == 1
     assert request.runs_per_task == 3
+    assert request.judge_affects_score is False
+
+
+def test_submission_request_fingerprint_includes_judge_score_gate():
+    advisory = SubmissionRequest(model="anthropic/claude-sonnet-4-6", judge_model="judge")
+    weighted = SubmissionRequest(
+        model="anthropic/claude-sonnet-4-6",
+        judge_model="judge",
+        judge_affects_score=True,
+    )
+
+    assert advisory.active_fingerprint() != weighted.active_fingerprint()
 
 
 @pytest.mark.asyncio
