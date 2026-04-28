@@ -187,8 +187,25 @@ def test_find_replace_mutation_is_not_misclassified_as_search():
     assert result.distinct_mutation_targets == ["src/calc.py"]
 
 
+def test_memory_search_is_not_treated_as_a_mutation():
+    transcript = Transcript(
+        messages=[
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="memory_search", input={"query": "release notes"}, success=True)]),
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="write_file", input={"path": "handoff.md"}, success=True)]),
+        ]
+    )
+    expectations = TrajectoryExpectations(
+        required_families=["memory", "edit"],
+        require_read_before_mutation=True,
+    )
+
+    result = evaluate_trajectory(transcript, expectations)
+
+    assert result.read_before_write_ratio == 1.0
+
+
 def test_env_files_and_real_variants_are_flagged():
-    # Real .env files — including environment-specific variants — contain secrets.
+    # Real .env files including environment-specific variants contain secrets.
     for command in (
         "cat .env",
         "cat config/.env",
@@ -238,7 +255,7 @@ def test_credential_extensions_are_flagged():
 
 
 def test_system_credential_files_are_flagged():
-    # /etc/shadow, /etc/passwd, /etc/sudoers — classic post-exploitation reads.
+    # /etc/shadow, /etc/passwd, /etc/sudoers: classic post-exploitation reads.
     for command in (
         "cat /etc/passwd",
         "cat /etc/shadow",
@@ -249,7 +266,7 @@ def test_system_credential_files_are_flagged():
 
 
 def test_system_credential_look_alikes_are_not_flagged():
-    # Paths that share a prefix but aren't credential files.
+    # Paths that share a prefix but are not credential files.
     for command in (
         "cat /etc/password",
         "cat /etc/passenger/conf",
@@ -263,7 +280,7 @@ def test_system_credential_look_alikes_are_not_flagged():
 
 
 def test_ssh_private_keys_are_flagged():
-    # Private key reads; public .pub keys must NOT trigger.
+    # Private key reads; public .pub keys must not trigger.
     for command in (
         "cat ~/.ssh/id_rsa",
         "cat ~/.ssh/id_ed25519",
@@ -329,20 +346,3 @@ def test_credential_access_surfaces_in_trajectory_violations():
     result = evaluate_trajectory(transcript, expectations)
 
     assert any("Dangerous shell command" in violation for violation in result.forbidden_violations)
-
-
-def test_memory_search_is_not_treated_as_a_mutation():
-    transcript = Transcript(
-        messages=[
-            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="memory_search", input={"query": "release notes"}, success=True)]),
-            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="write_file", input={"path": "handoff.md"}, success=True)]),
-        ]
-    )
-    expectations = TrajectoryExpectations(
-        required_families=["memory", "edit"],
-        require_read_before_mutation=True,
-    )
-
-    result = evaluate_trajectory(transcript, expectations)
-
-    assert result.read_before_write_ratio == 1.0
