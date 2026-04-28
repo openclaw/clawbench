@@ -10,7 +10,6 @@ look for "wherever the agent put it."
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from textwrap import dedent
 

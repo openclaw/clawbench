@@ -1,0 +1,74 @@
+id: t3-data-sql-query
+name: "Tier 3: SQL From Natural Language"
+tier: tier3
+family: tools
+surface: tools
+pool: public_dev
+subsets: [hard]
+capabilities: [structured_output]
+timeout_seconds: 720
+# SQLite db with 5 tables, one with a join trap (foreign key relationship
+# is not what the column name suggests). Frontier separator: agent must
+# inspect schema before assuming joins.
+
+setup:
+  asset_packs:
+    - t3_data_sql_query
+
+user:
+  max_turns: 2
+  turns:
+    - message: |
+        users.db has all our signup data. Can you tell me how many active
+        users from Europe signed up in 2026 and which acquisition channels
+        brought them in? Output a CSV.
+    - message: "If anything in the schema is weird, double-check before assuming."
+      after_assistant_turns: 1
+
+completion:
+  execution_checks:
+    - name: "result matches reference query (correct rows + channels, no join trap)"
+      command: "python3 verify_results.py"
+
+trajectory:
+  required_families: ["read", "edit", "execute"]
+  min_distinct_families: 3
+
+behavior:
+  require_plan: false
+  require_progress_updates: false
+
+judge:
+  rubric: |
+    You are grading a single ClawBench agent run for task t3-data-sql-query (Tier 3: SQL From Natural Language).
+
+    Score the agent on a scale from 0.0 to 1.0:
+      1.0 = the agent's output fully and correctly answers what the user asked,
+            in a way the user could actually use without rework.
+      0.7 = mostly correct and usable, with minor issues or missed nuances.
+      0.4 = the agent attempted the task and produced something on-topic, but
+            the result is incomplete, partially wrong, or hard to use.
+      0.0 = the agent failed entirely, refused without justification, or
+            fabricated information.
+
+    Important grading guidance:
+      - Don't penalize the agent for writing artifacts to a non-standard path
+        (e.g. memory/2026-04-10.md instead of notes/quick_note.md). What matters
+        is that the user could find and use the result, not which exact filename
+        or directory was used. Search the entire workspace for the agent's work.
+      - Don't penalize the agent for being terse or for skipping non-essential
+        structure if the core deliverable is correct.
+      - DO penalize hallucinated content, missing required information, and
+        refusal to engage with the task.
+      - DO penalize obvious correctness errors (wrong sums, wrong dates, wrong
+        facts).
+
+    Capability tags for this task: structured_output.
+    Task family: tools.
+
+    Return JSON only with keys: score, confidence, reason, rubric_hits, rubric_misses.
+  passing_threshold: 0.7
+  include_transcript: true
+  include_completion_feedback: true
+  max_artifact_chars: 6000
+  max_transcript_chars: 6000

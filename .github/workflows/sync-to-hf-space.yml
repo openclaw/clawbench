@@ -1,19 +1,17 @@
 name: Sync main to HF Space
 
 # Mirrors every push to `main` on GitHub into the HF Space git remote so
-# that the public ClawBench Space (https://huggingface.co/spaces/ScoootScooob/clawbench)
+# that the public ClawBench Space (https://huggingface.co/spaces/openclaw/clawbench)
 # always tracks the source-of-truth repo.
 #
 # Required repository secrets (Settings -> Secrets and variables -> Actions):
 #   HF_TOKEN     Hugging Face access token with write permission to the Space.
 #                Create at https://huggingface.co/settings/tokens
 #                (token type "Write" is sufficient; no organization scope needed).
-#   HF_USERNAME  Your Hugging Face username, e.g. "ScoootScooob".
-#                (The Space is `ScoootScooob/clawbench`, so the username is
-#                the owner half of that path.)
+#   HF_USERNAME  Optional fallback username if token introspection fails.
 #
 # Optional: set HF_SPACE_ID as a repo variable (not secret) to point the
-# workflow at a different Space; defaults to "ScoootScooob/clawbench".
+# workflow at a different Space; defaults to "openclaw/clawbench".
 
 on:
   push:
@@ -42,20 +40,58 @@ jobs:
       - name: Verify required secrets
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_USERNAME: ${{ secrets.HF_USERNAME }}
         run: |
-          if [ -z "$HF_TOKEN" ] || [ -z "$HF_USERNAME" ]; then
-            echo "::error::HF_TOKEN and HF_USERNAME repository secrets must both be set."
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN repository secret must be set."
             echo "  Create HF_TOKEN at https://huggingface.co/settings/tokens (type: Write)"
-            echo "  Set HF_USERNAME to your HF username (the owner of the Space)."
             exit 1
           fi
+
+      - name: Ensure HF Space exists
+        id: hf
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{ secrets.HF_USERNAME }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID || 'openclaw/clawbench' }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'huggingface_hub>=0.24,<2'
+          python - <<'PY'
+          import os
+
+          from huggingface_hub import HfApi
+
+          token = os.environ["HF_TOKEN"]
+          space_id = os.environ["HF_SPACE_ID"]
+          fallback_username = os.environ.get("HF_USERNAME", "").strip()
+
+          api = HfApi(token=token)
+          username = fallback_username
+          try:
+              info = api.whoami(token=token)
+              username = str(info.get("name") or username).strip()
+          except Exception as exc:
+              if not username:
+                  raise RuntimeError("HF_USERNAME fallback is required when token introspection fails") from exc
+
+          api.create_repo(
+              repo_id=space_id,
+              repo_type="space",
+              space_sdk="docker",
+              token=token,
+              exist_ok=True,
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"username={username}\n")
+          print(f"HF Space ready: {space_id}")
+          PY
 
       - name: Push to HF Space remote
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_USERNAME: ${{ secrets.HF_USERNAME }}
-          HF_SPACE_ID: ${{ vars.HF_SPACE_ID || 'ScoootScooob/clawbench' }}
+          HF_USERNAME: ${{ steps.hf.outputs.username }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID || 'openclaw/clawbench' }}
         run: |
           set -euo pipefail
           # Authenticate via token in the URL. HF Spaces accept the
@@ -83,6 +119,6 @@ jobs:
         run: |
           echo "### HF Space mirror" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Pushed \`$(git rev-parse --short HEAD)\` to \`ScoootScooob/clawbench\` Space." >> "$GITHUB_STEP_SUMMARY"
+          echo "Pushed \`$(git rev-parse --short HEAD)\` to \`${{ vars.HF_SPACE_ID || 'openclaw/clawbench' }}\` Space." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "View the Space: <https://huggingface.co/spaces/ScoootScooob/clawbench>" >> "$GITHUB_STEP_SUMMARY"
+          echo "View the Space: <https://huggingface.co/spaces/${{ vars.HF_SPACE_ID || 'openclaw/clawbench' }}>" >> "$GITHUB_STEP_SUMMARY"

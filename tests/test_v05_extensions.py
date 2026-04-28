@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from clawbench.diagnostic import build_diagnostic, submit_run
+from clawbench.diagnose_cli import infer_registration_traces_from_manifests
 from clawbench.factor_analysis import analyze
 from clawbench.insights import (
     compute_capability_gaps,
@@ -33,7 +34,6 @@ from clawbench.prediction import (
     HistoricalDatabase,
     HistoricalRun,
     attribute_surprise,
-    predict_profile,
 )
 from clawbench.profile import (
     PluginManifest,
@@ -137,6 +137,22 @@ def test_taguchi_sn_handles_zero_score_without_crashing():
 # ---------------------------------------------------------------------------
 # Plugin Utilization Audit
 # ---------------------------------------------------------------------------
+
+
+def test_infer_registration_traces_from_manifests_uses_declared_tools():
+    profile = _make_profile("p", ["alpha", "missing"])
+    manifests = {
+        "alpha": _make_manifest(
+            "alpha",
+            tools=["read_file", "browser_click", "memory_write"],
+        ),
+    }
+
+    traces = infer_registration_traces_from_manifests(profile, manifests)
+
+    assert set(traces) == {"alpha"}
+    assert traces["alpha"].tools == ["read_file", "browser_click", "memory_write"]
+    assert traces["alpha"].tool_families_seen == ["browser", "memory", "read"]
 
 
 def test_audit_flags_dead_weight_plugin():

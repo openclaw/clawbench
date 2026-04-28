@@ -37,7 +37,8 @@ from clawbench.diagnostic import build_diagnostic, submit_run
 from clawbench.insights import publish_insights
 from clawbench.prediction import HistoricalDatabase
 from clawbench.profile import PluginManifest, PluginProfile, RegistrationTrace
-from clawbench.schemas import Transcript
+from clawbench.schemas import ToolCall, Transcript
+from clawbench.trajectory import classify_tool_call
 
 
 DEFAULT_CLAWBENCH_ROOT = Path(".clawbench")
@@ -78,6 +79,39 @@ def load_transcripts(path: Path) -> dict[str, Transcript]:
         for task_id, raw in data.items():
             out[str(task_id)] = Transcript.model_validate(raw)
     return out
+
+
+def infer_registration_traces_from_manifests(
+    profile: PluginProfile,
+    manifests: dict[str, PluginManifest],
+) -> dict[str, RegistrationTrace]:
+    """Build best-effort registration traces from manifest-declared tools.
+
+    Full runtime registration traces are better because they include hooks,
+    gateway methods, routes, and services. This fallback still gives the
+    diagnostic layer exact manifest-declared tool names, which is enough to
+    attribute many transcript tool calls instead of dropping all utilization
+    into the unassigned bucket.
+    """
+    traces: dict[str, RegistrationTrace] = {}
+    for entry in profile.plugins:
+        manifest = manifests.get(entry.id)
+        if manifest is None:
+            continue
+        tools = list(manifest.contracts.get("tools", []))
+        families = sorted(
+            {
+                classify_tool_call(ToolCall(name=tool))[0]
+                for tool in tools
+                if tool
+            }
+        )
+        traces[entry.id] = RegistrationTrace(
+            plugin_id=entry.id,
+            tools=tools,
+            tool_families_seen=families,
+        )
+    return traces
 
 
 def write_submission_record(
@@ -162,6 +196,7 @@ def main() -> None:
     profile = PluginProfile.from_yaml_file(args.profile)
     plugin_ids = [e.id for e in profile.plugins]
     manifests = load_manifests(args.manifests, plugin_ids)
+    traces = infer_registration_traces_from_manifests(profile, manifests)
     db = HistoricalDatabase(path=args.db)
 
     actual_overall: float | None = None
@@ -172,9 +207,16 @@ def main() -> None:
             sys.exit(2)
         results_data = json.loads(args.results.read_text(encoding="utf-8"))
         actual_overall = float(results_data.get("overall_score", 0.0))
-        actual_per_task = {
-            k: float(v) for k, v in results_data.get("per_task_score", {}).items()
-        }
+        if "per_task_score" in results_data:
+            actual_per_task = {
+                k: float(v) for k, v in results_data.get("per_task_score", {}).items()
+            }
+        else:
+            actual_per_task = {
+                str(item.get("task_id")): float(item.get("mean_task_score", 0.0))
+                for item in results_data.get("task_results", [])
+                if item.get("task_id")
+            }
 
     transcripts: dict[str, Transcript] | None = None
     if args.transcripts:
@@ -208,6 +250,7 @@ def main() -> None:
             db=db,
             actual_overall_score=actual_overall,
             actual_per_task_scores=actual_per_task,
+            traces=traces,
             transcripts=transcripts,
             tier_of=tier_of,
         )
@@ -223,6 +266,7 @@ def main() -> None:
             db=db,
             actual_overall_score=actual_overall,
             actual_per_task_scores=actual_per_task,
+            traces=traces,
             transcripts=transcripts,
             tier_of=tier_of,
         )

@@ -1,5 +1,5 @@
 from clawbench.schemas import ToolCall, TrajectoryExpectations, Transcript, TranscriptMessage
-from clawbench.trajectory import evaluate_trajectory
+from clawbench.trajectory import classify_tool_call, evaluate_trajectory
 
 
 def test_trajectory_rewards_read_before_write_and_self_verification():
@@ -112,6 +112,73 @@ def test_trajectory_counts_distinct_read_and_mutation_targets():
     assert result.distinct_read_targets_pre_edit == ["src/app.py", "tests/test_app.py"]
     assert result.distinct_mutation_targets == ["src/app.py", "src/helpers.py"]
     assert result.score > 0.8
+
+
+def test_replace_and_insert_tools_are_classified_as_edit():
+    # str_replace and insert_text are common in-place mutation tools used by many agents.
+    # Both were previously falling through all checks and returning ("unknown", False),
+    # and search-first matching also misclassified find_replace/search_replace as search.
+    for tool_name in (
+        "str_replace",
+        "replace_in_file",
+        "insert_text",
+        "insert_at_line",
+        "find_replace",
+        "search_replace",
+    ):
+        tool_call = ToolCall(name=tool_name, input={"path": "foo.py"}, success=True)
+        family, mutating = classify_tool_call(tool_call)
+        assert family == "edit", f"{tool_name!r} classified as {family!r}, expected 'edit'"
+        assert mutating is True, f"{tool_name!r} classified as non-mutating"
+
+
+def test_str_replace_mutation_is_detected_in_trajectory():
+    # When an agent edits via str_replace, the trajectory scorer must detect the mutation.
+    # Before the fix, str_replace was classified as ("unknown", False): zero mutations were
+    # detected, so read_before_write_ratio was 1.0 for the wrong reason and the edit family
+    # never appeared in distinct_families.
+    transcript = Transcript(
+        messages=[
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="read_file", input={"path": "src/calc.py"}, success=True)]),
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="str_replace", input={"path": "src/calc.py", "old_str": "return x", "new_str": "return x + 1"}, success=True)]),
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="exec", input={"command": "pytest -q"}, success=True)]),
+        ]
+    )
+    expectations = TrajectoryExpectations(
+        required_families=["read", "edit", "execute"],
+        require_read_before_mutation=True,
+        require_self_verification=True,
+        min_distinct_mutation_targets=1,
+    )
+
+    result = evaluate_trajectory(transcript, expectations)
+
+    assert "edit" not in result.required_families_missing
+    assert result.distinct_mutation_targets == ["src/calc.py"]
+    assert result.self_verified is True
+    assert result.read_before_write_ratio == 1.0
+
+
+def test_find_replace_mutation_is_not_misclassified_as_search():
+    transcript = Transcript(
+        messages=[
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="read_file", input={"path": "src/calc.py"}, success=True)]),
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="find_replace", input={"path": "src/calc.py", "find": "return x", "replace": "return x + 1"}, success=True)]),
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="exec", input={"command": "pytest -q"}, success=True)]),
+        ]
+    )
+    expectations = TrajectoryExpectations(
+        required_families=["read", "edit", "execute"],
+        require_read_before_mutation=True,
+        require_self_verification=True,
+        min_distinct_mutation_targets=1,
+    )
+
+    result = evaluate_trajectory(transcript, expectations)
+
+    assert "edit" not in result.required_families_missing
+    assert "search" not in result.distinct_families
+    assert result.distinct_mutation_targets == ["src/calc.py"]
 
 
 def test_memory_search_is_not_treated_as_a_mutation():

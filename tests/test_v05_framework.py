@@ -18,7 +18,6 @@ real benchmark runs exist.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -36,7 +35,7 @@ from clawbench.profile import (
 )
 from clawbench.prediction import HistoricalDatabase, HistoricalRun, predict_profile
 from clawbench.factor_analysis import analyze
-from clawbench.diagnostic import build_diagnostic, submit_run
+from clawbench.diagnostic import build_diagnostic
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +451,7 @@ def test_prediction_improves_with_data():
     # The full-stack actually beats every seed profile, so prediction will
     # underestimate but should still be in a reasonable range.
     assert error < 0.25, f"prediction error {error} too large"
-    print(f"  ✓ prediction error within acceptable range")
+    print("  ✓ prediction error within acceptable range")
 
 
 def test_factor_analysis_finds_signal():

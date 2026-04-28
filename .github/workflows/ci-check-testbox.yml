@@ -1,0 +1,97 @@
+name: Blacksmith Testbox
+
+on:
+  workflow_dispatch:
+    inputs:
+      testbox_id:
+        type: string
+        description: "Testbox session ID"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 25
+    steps:
+      - name: Begin Testbox
+        uses: useblacksmith/begin-testbox@v2
+        with:
+          testbox_id: ${{ inputs.testbox_id }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Prepare Testbox shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=50 origin "+refs/heads/main:refs/remotes/origin/main"
+          python_dir="$(dirname "$(python -c 'import sys; print(sys.executable)')")"
+          sudo ln -sf "$python_dir/python" /usr/local/bin/python
+          sudo ln -sf "$python_dir/python" /usr/local/bin/python3
+          sudo ln -sf "$python_dir/pip" /usr/local/bin/pip
+          sudo ln -sf "$python_dir/pip" /usr/local/bin/pip3
+          sudo ln -sf "$python_dir/pytest" /usr/local/bin/pytest
+
+      - name: Hydrate Testbox env helper
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{ secrets.HF_USERNAME }}
+          CLAWBENCH_QUEUE_DATASET: ${{ vars.CLAWBENCH_QUEUE_DATASET || 'openclaw/clawbench-results' }}
+          CLAWBENCH_JUDGE_MODEL: ${{ vars.CLAWBENCH_JUDGE_MODEL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY_OLD: ${{ secrets.ANTHROPIC_API_KEY_OLD }}
+          ANTHROPIC_API_TOKEN: ${{ secrets.ANTHROPIC_API_TOKEN }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          Z_AI_API_KEY: ${{ secrets.Z_AI_API_KEY }}
+          OPENCLAW_CODEX_AUTH_JSON: ${{ secrets.OPENCLAW_CODEX_AUTH_JSON }}
+          OPENCLAW_CODEX_CONFIG_TOML: ${{ secrets.OPENCLAW_CODEX_CONFIG_TOML }}
+          OPENCLAW_CLAUDE_JSON: ${{ secrets.OPENCLAW_CLAUDE_JSON }}
+          OPENCLAW_CLAUDE_CREDENTIALS_JSON: ${{ secrets.OPENCLAW_CLAUDE_CREDENTIALS_JSON }}
+          OPENCLAW_CLAUDE_SETTINGS_JSON: ${{ secrets.OPENCLAW_CLAUDE_SETTINGS_JSON }}
+          OPENCLAW_CLAUDE_SETTINGS_LOCAL_JSON: ${{ secrets.OPENCLAW_CLAUDE_SETTINGS_LOCAL_JSON }}
+          OPENCLAW_GEMINI_SETTINGS_JSON: ${{ secrets.OPENCLAW_GEMINI_SETTINGS_JSON }}
+          CLAWBENCH_CODEX_AUTH_JSON: ${{ secrets.CLAWBENCH_CODEX_AUTH_JSON }}
+          CLAWBENCH_CODEX_CONFIG_TOML: ${{ secrets.CLAWBENCH_CODEX_CONFIG_TOML }}
+          CLAWBENCH_CLAUDE_JSON: ${{ secrets.CLAWBENCH_CLAUDE_JSON }}
+          CLAWBENCH_CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAWBENCH_CLAUDE_CREDENTIALS_JSON }}
+          CLAWBENCH_CLAUDE_SETTINGS_JSON: ${{ secrets.CLAWBENCH_CLAUDE_SETTINGS_JSON }}
+          CLAWBENCH_CLAUDE_SETTINGS_LOCAL_JSON: ${{ secrets.CLAWBENCH_CLAUDE_SETTINGS_LOCAL_JSON }}
+          CLAWBENCH_GEMINI_SETTINGS_JSON: ${{ secrets.CLAWBENCH_GEMINI_SETTINGS_JSON }}
+        run: bash scripts/ci-hydrate-testbox-env.sh
+
+      - name: Run Testbox
+        uses: useblacksmith/run-testbox@v2
+        if: always()

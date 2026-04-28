@@ -10,22 +10,10 @@ from pathlib import Path
 import click
 
 from clawbench.client import GatewayConfig
-from clawbench.harness import BenchmarkHarness
+from clawbench.harness import BenchmarkHarness, KNOWN_ADAPTERS
+from clawbench.schemas import ScenarioDomain
 
-SCENARIO_CHOICES = [
-    "file_system_ops",
-    "web_info_ops",
-    "calendar_reminders",
-    "communication_messaging",
-    "data_processing_analysis",
-    "coding_dev_assist",
-    "personal_life_assistant",
-    "multi_step_compound",
-    "context_continuation",
-    "error_boundary_cases",
-    "skill_calling",
-    "system_capabilities",
-]
+SCENARIO_CHOICES = [scenario.value for scenario in ScenarioDomain]
 
 
 @click.group()
@@ -41,6 +29,13 @@ def cli(verbose: bool) -> None:
 
 @cli.command()
 @click.option("--model", "-m", required=True, help="Model to benchmark")
+@click.option(
+    "--adapter",
+    type=click.Choice(KNOWN_ADAPTERS),
+    default="openclaw",
+    show_default=True,
+    help="Agent harness adapter. OpenClaw is executable today; other adapters are tracked targets.",
+)
 @click.option("--gateway-token", envvar="OPENCLAW_GATEWAY_TOKEN", default="", help="Gateway auth token")
 @click.option(
     "--judge-model",
@@ -48,7 +43,7 @@ def cli(verbose: bool) -> None:
     default="",
     help="Optional advisory LLM judge model (does not affect official score)",
 )
-@click.option("--runs", "-n", default=5, help="Runs per task (reliability uses all runs)")
+@click.option("--runs", "-n", default=3, show_default=True, help="Runs per task (reliability uses all runs)")
 @click.option("--tier", type=click.Choice(["tier1", "tier2", "tier3", "tier4", "tier5"]), help="Filter tier")
 @click.option("--scenario", type=click.Choice(SCENARIO_CHOICES), help="Filter query scenario")
 @click.option("--artifact-type", type=click.Choice(["file", "information", "operation", "code", "external_action", "memory", "automation", "mixed"]), help="Filter expected artifact type")
@@ -116,8 +111,14 @@ def cli(verbose: bool) -> None:
     show_default=True,
     help="Where to write ecosystem insight files after a --profile run.",
 )
+@click.option(
+    "--dynamics",
+    is_flag=True,
+    help="Run quick post-benchmark dynamics analysis. Prefer dynamics-report for offline cache/archive analysis.",
+)
 def run(
     model: str,
+    adapter: str,
     gateway_token: str,
     judge_model: str,
     runs: int,
@@ -137,11 +138,13 @@ def run(
     browser_concurrency: int,
     profile: Path | None,
     insights_dir: Path,
+    dynamics: bool,
 ) -> None:
     gateway_config = GatewayConfig(token=gateway_token)
     harness = BenchmarkHarness(
         gateway_config=gateway_config,
         model=model,
+        adapter=adapter,
         judge_model=judge_model,
         runs_per_task=runs,
         tier=tier,
@@ -165,10 +168,14 @@ def run(
         json.dump(result.model_dump(), handle, indent=2)
     click.echo(f"\nResults saved to {out_path}")
 
+    if dynamics:
+        _run_dynamics_analysis(harness.last_task_runs, out_path)
+
     if profile is not None:
         _run_v05_diagnostic(
             profile_path=profile,
             result=result,
+            task_runs=harness.last_task_runs,
             runs_per_task=runs,
             insights_dir=insights_dir,
         )
@@ -179,10 +186,88 @@ def run(
         asyncio.run(upload_result(result))
 
 
+@cli.command("dynamics-report")
+@click.option(
+    "--archive-dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    required=True,
+    help="Path to a run cache/archive root or a single model cache directory.",
+)
+@click.option(
+    "--model",
+    default=None,
+    help="Model id to select when the archive root contains multiple model directories.",
+)
+@click.option("--tier", type=click.Choice(["tier1", "tier2", "tier3", "tier4", "tier5"]))
+@click.option("--task", "task_ids", multiple=True, help="Specific task IDs to include from the archive.")
+@click.option(
+    "--output-dir",
+    type=click.Path(path_type=Path),
+    default=Path("results/offline_dynamics"),
+    show_default=True,
+    help="Directory where dynamics.json and plots will be written.",
+)
+@click.option(
+    "--no-plots",
+    is_flag=True,
+    help="Write only dynamics.json and skip plot rendering.",
+)
+def dynamics_report(
+    archive_dir: Path,
+    model: str | None,
+    tier: str | None,
+    task_ids: tuple[str, ...],
+    output_dir: Path,
+    no_plots: bool,
+) -> None:
+    """Generate dynamics plots and a JSON report from cached TaskRunResult archives."""
+    from clawbench.dynamics_archive import load_task_runs_archive
+
+    try:
+        task_runs = load_task_runs_archive(
+            archive_dir=archive_dir,
+            model=model,
+            task_ids=task_ids,
+            tier=tier,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if not task_runs:
+        raise click.ClickException(f"No cached runs found under {archive_dir}")
+
+    report_path, plots, n_runs = _write_dynamics_report(
+        task_runs,
+        output_dir,
+        generate_plots=not no_plots,
+    )
+    click.echo(f"Loaded {n_runs} cached runs across {len(task_runs)} tasks")
+    click.echo(f"Dynamics report saved to {report_path}")
+    click.echo(f"Saved {len(plots)} plots to {output_dir}/")
+
+
+def _write_dynamics_report(
+    task_runs: dict[str, list],
+    output_dir: Path,
+    *,
+    generate_plots: bool = True,
+) -> tuple[Path, list[Path], int]:
+    from clawbench.dynamics_archive import write_dynamics_report
+
+    report_path, plots = write_dynamics_report(
+        task_runs,
+        output_dir,
+        generate_plots=generate_plots,
+    )
+    n_runs = sum(len(runs) for runs in task_runs.values())
+    return report_path, plots, n_runs
+
+
 def _run_v05_diagnostic(
     *,
     profile_path: Path,
     result,
+    task_runs: dict[str, list] | None,
     runs_per_task: int,
     insights_dir: Path,
 ) -> None:
@@ -192,6 +277,7 @@ def _run_v05_diagnostic(
         DEFAULT_MANIFEST_DIR,
         DEFAULT_SUBMISSIONS_DIR,
         ensure_data_dirs,
+        infer_registration_traces_from_manifests,
         load_manifests,
         write_submission_record,
     )
@@ -205,6 +291,7 @@ def _run_v05_diagnostic(
     plugin_profile = PluginProfile.from_yaml_file(profile_path)
     plugin_ids = [e.id for e in plugin_profile.plugins]
     manifests = load_manifests(DEFAULT_MANIFEST_DIR, plugin_ids)
+    traces = infer_registration_traces_from_manifests(plugin_profile, manifests)
     db = HistoricalDatabase(path=DEFAULT_DB_PATH)
 
     # Extract per-task scores + tier map from the BenchmarkResult
@@ -215,12 +302,16 @@ def _run_v05_diagnostic(
         if getattr(task_stats, "tier", ""):
             tier_of[task_stats.task_id] = task_stats.tier
 
+    transcripts = _merge_task_transcripts_from_runs(task_runs or {})
+
     diagnostic = submit_run(
         profile=plugin_profile,
         manifests=manifests,
         db=db,
         actual_overall_score=float(result.overall_score),
         actual_per_task_scores=actual_per_task,
+        traces=traces,
+        transcripts=transcripts,
         tier_of=tier_of or None,
         n_runs_contributing=runs_per_task,
     )
@@ -241,6 +332,22 @@ def _run_v05_diagnostic(
         f"(fingerprint {diagnostic.fingerprint_hash}). "
         f"Insights published to {insights_dir}."
     )
+
+
+def _merge_task_transcripts_from_runs(task_runs: dict[str, list]):
+    """Merge all run transcripts per task for the v0.5 utilization audit."""
+    if not task_runs:
+        return None
+    from clawbench.schemas import Transcript
+
+    merged: dict[str, Transcript] = {}
+    for task_id, runs in task_runs.items():
+        transcript = Transcript()
+        for run in runs:
+            transcript.messages.extend(getattr(run.transcript, "messages", []))
+        if transcript.messages:
+            merged[task_id] = transcript
+    return merged or None
 
 
 @cli.command()
@@ -691,6 +798,24 @@ def show(result_file: str) -> None:
             f"rel={task.reliability_score:.2f} delivery={task.delivery_outcome_counts} "
             f"tok/pass={task.tokens_per_pass:.0f} p50={task.median_duration_ms:.0f}ms fail={top_failure}"
         )
+
+
+def _run_dynamics_analysis(
+    task_runs: dict[str, list],
+    result_path: str,
+) -> None:
+    """Compute stratified dynamics from raw TaskRunResult objects."""
+    run_stem = Path(result_path).stem
+    dyn_dir = Path(result_path).parent / f"{run_stem}_dynamics"
+    try:
+        dyn_path, plots, n_runs = _write_dynamics_report(task_runs, dyn_dir)
+    except ValueError as exc:
+        click.echo(str(exc))
+        return
+
+    click.echo(f"\n[dynamics] Analysed {n_runs} cached runs")
+    click.echo(f"  Dynamics report saved to {dyn_path}")
+    click.echo(f"  Saved {len(plots)} plots to {dyn_dir}/")
 
 
 def main() -> None:

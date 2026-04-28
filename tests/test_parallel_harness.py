@@ -292,7 +292,7 @@ def main():
         except AssertionError as e:
             print(f"  ✗ FAIL: {e}")
             failed += 1
-        except Exception as e:
+        except Exception:
             import traceback
             traceback.print_exc()
             failed += 1

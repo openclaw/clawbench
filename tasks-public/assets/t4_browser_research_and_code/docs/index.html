@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Reporting API Docs</title>
+  </head>
+  <body>
+    <h1>Reporting API</h1>
+
+    <h2>Versioning</h2>
+    <ul>
+      <li><code>/v1/reports</code> — <strong>deprecated</strong>, sunset on 2026-07-01.</li>
+      <li><code>/v2/reports</code> — <strong>current</strong> (GA since 2026.2). Use this.</li>
+      <li><code>/v3/reports</code> — <strong>beta</strong>, not recommended for production; interface may change.</li>
+    </ul>
+    <p>New integrations must use <code>/v2/reports</code>.</p>
+
+    <h2>Required headers (for /v2/reports)</h2>
+    <p>Every request to the current reporting endpoint <em>must</em> include:</p>
+    <ul>
+      <li><code>X-Workspace-Id</code> — identifies the tenant workspace.</li>
+      <li><code>Authorization</code> — <code>Bearer &lt;token&gt;</code>.</li>
+    </ul>
+
+    <h2>Optional headers</h2>
+    <ul>
+      <li><code>X-Request-Id</code> — opaque client-side correlation id for tracing.</li>
+    </ul>
+
+    <h2>Headers for other endpoints (do NOT send on /v2/reports)</h2>
+    <ul>
+      <li><code>X-Admin-Token</code> — required on <code>/v2/admin</code> only. Sending it on <code>/v2/reports</code> will cause a 400.</li>
+    </ul>
+
+    <h2>Rate limits</h2>
+    <p>The <code>/v2/reports</code> endpoint is rate-limited to <strong>120 requests per minute</strong> per workspace. Requests beyond this return 429.</p>
+
+    <h2>Payload size</h2>
+    <p>Max body size on <code>/v2/reports</code> is <strong>10 MiB</strong>. Larger payloads should use the chunked upload flow (see <code>/v2/uploads</code>, not covered here).</p>
+  </body>
+</html>

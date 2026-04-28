@@ -709,27 +709,31 @@ class EvalWorker:
         except Exception:
             pass
 
-        self._gateway_process = subprocess.Popen(
-            [
-                *gateway_cmd,
-                "gateway",
-                "run",
-                "--allow-unconfigured",
-                "--dev",
-                "--bind",
-                "loopback",
-                "--port",
-                str(GATEWAY_PORT),
-                "--auth",
-                "token",
-                "--token",
-                gateway_token,
-            ],
-            stdout=open("/tmp/gateway.log", "a", encoding="utf-8"),
-            stderr=subprocess.STDOUT,
-            env=gateway_env,
-            start_new_session=True,  # own process group so we can reap chromium grandchildren on shutdown
-        )
+        log_handle = Path("/tmp/gateway.log").open("a", encoding="utf-8")
+        try:
+            self._gateway_process = subprocess.Popen(
+                [
+                    *gateway_cmd,
+                    "gateway",
+                    "run",
+                    "--allow-unconfigured",
+                    "--dev",
+                    "--bind",
+                    "loopback",
+                    "--port",
+                    str(GATEWAY_PORT),
+                    "--auth",
+                    "token",
+                    "--token",
+                    gateway_token,
+                ],
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                env=gateway_env,
+                start_new_session=True,  # own process group so we can reap chromium grandchildren on shutdown
+            )
+        finally:
+            log_handle.close()
 
         import httpx
 

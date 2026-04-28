@@ -1,9 +1,0 @@
-{
-  "people": [
-    {"name": "Sasha", "venmo": "@sasha-q"},
-    {"name": "Jin", "venmo": "@jin-h-2026"},
-    {"name": "Rio", "venmo": null},
-    {"name": "Marcus", "venmo": "@marcus-paid-the-bill"},
-    {"name": "Priya", "venmo": "@priyaaa"}
-  ]
-}

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import math
 import re
-from typing import Any
 
 from clawbench.schemas import ToolCall, TrajectoryExpectations, TrajectoryResult, Transcript
 
@@ -279,12 +278,12 @@ def classify_tool_call(tool_call: ToolCall) -> tuple[str, bool]:
         action = str(tool_call.input.get("action", "")).lower()
         mutating_actions = {"act", "click", "fill", "press", "type", "submit", "upload"}
         return "browser", action in mutating_actions or action.startswith("act:")
+    if re.search(r"write|edit|patch|apply|create|delete|rename|replace|insert", name):
+        return "edit", True
     if re.search(r"search|grep|find|rg", name):
         return "search", False
     if re.search(r"read|open|view|cat", name):
         return "read", False
-    if re.search(r"write|edit|patch|apply|create|delete|rename", name):
-        return "edit", True
     if re.search(r"bash|exec|terminal|shell|command", name):
         return classify_shell_command(extract_shell_command(tool_call))
     if re.search(r"test|run|python|node", name):
