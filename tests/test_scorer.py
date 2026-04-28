@@ -29,6 +29,18 @@ def test_combine_run_score_uses_normalized_weighted_average():
     assert combine_run_score(completion=0.5, trajectory=1.0, behavior=1.0) == 0.7778
 
 
+def test_combine_run_score_ignores_judge_by_default():
+    advisory_only = combine_run_score(
+        completion=1.0,
+        trajectory=1.0,
+        behavior=1.0,
+        judge=0.0,
+        has_deterministic_verifier=True,
+    )
+
+    assert advisory_only == 1.0
+
+
 def test_combine_run_score_caps_judge_when_deterministic_verifier_present():
     """Per v0.4 spec: semantic quality never rescues failed completion.
 
@@ -46,6 +58,7 @@ def test_combine_run_score_caps_judge_when_deterministic_verifier_present():
         behavior=1.0,
         judge=1.0,
         has_deterministic_verifier=True,
+        include_judge=True,
     )
     without_judge = combine_run_score(
         completion=0.5,
@@ -65,6 +78,7 @@ def test_combine_run_score_judge_lifts_at_most_10pct_when_deterministic_passes()
         behavior=1.0,
         judge=1.0,
         has_deterministic_verifier=True,
+        include_judge=True,
     )
     assert full == 1.0
 
@@ -76,18 +90,20 @@ def test_combine_run_score_judge_lifts_at_most_10pct_when_deterministic_passes()
         behavior=1.0,
         judge=0.0,
         has_deterministic_verifier=True,
+        include_judge=True,
     )
     assert abs(lost_judge - 0.9) < 1e-4
 
 
 def test_combine_run_score_semantic_only_task_lets_judge_dominate():
-    """When no deterministic verifier exists, the judge is allowed to drive."""
+    """When no deterministic verifier exists, the judge is allowed to drive only when gated on."""
     semantic = combine_run_score(
         completion=0.0,
         trajectory=0.0,
         behavior=0.0,
         judge=1.0,
         has_deterministic_verifier=False,
+        include_judge=True,
     )
     # Judge weight 0.50 out of total 1.0
     assert abs(semantic - 0.5) < 1e-4

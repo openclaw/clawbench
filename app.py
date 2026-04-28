@@ -76,6 +76,7 @@ DEFAULT_RUNS_PER_TASK = _env_int("CLAWBENCH_DEFAULT_RUNS_PER_TASK", 3, minimum=1
 DEFAULT_PARALLEL_LANES = _env_int("CLAWBENCH_DEFAULT_PARALLEL_LANES", 1, minimum=1, maximum=MAX_LANES_PER_SUBMISSION)
 LEADERBOARD_CACHE_SECONDS = _env_int("CLAWBENCH_LEADERBOARD_CACHE_SECONDS", 60, minimum=0, maximum=3600)
 ENABLE_BULK_SUBMIT = os.environ.get("CLAWBENCH_ENABLE_BULK_SUBMIT", "").strip().lower() in {"1", "true", "yes", "on"}
+JUDGE_AFFECTS_SCORE = os.environ.get("CLAWBENCH_JUDGE_AFFECTS_SCORE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 # ---------------------------------------------------------------------------
 # Background worker (starts in a thread)
@@ -291,6 +292,7 @@ def submit_model(
         model=model_id,
         provider=provider_id,
         judge_model=judge_model.strip(),
+        judge_affects_score=JUDGE_AFFECTS_SCORE,
         runs_per_task=int(runs),
         max_parallel_lanes=int(max_parallel_lanes),
         tier=selected_tier,
@@ -340,6 +342,7 @@ def submit_all_presets(
     submitted = []
     blocked = []
     for preset, request_kwargs in preset_specs:
+        request_kwargs["judge_affects_score"] = JUDGE_AFFECTS_SCORE
         request = SubmissionRequest(**request_kwargs)
         try:
             job = asyncio.run(queue.submit(request))
