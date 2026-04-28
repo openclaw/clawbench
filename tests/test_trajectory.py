@@ -227,6 +227,8 @@ def test_non_force_git_push_is_not_flagged():
         "git pushback --force",
         "rm -f /tmp/x",
         "git commit -m '+feature' && git log",
+        'git commit -m "git push --force"',
+        "echo 'git push --force'",
         "ls && git push origin main",
     ):
         assert not has_dangerous_shell_pattern(command), f"{command!r} should not be flagged as dangerous"
