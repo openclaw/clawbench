@@ -8,20 +8,37 @@ Runs the repository test suite automatically on:
 - every `pull_request`
 - manual dispatch from the Actions tab
 
-It uses Python 3.12, installs the package with `pip install -e .`, then
-runs `python -m pytest -q`.
+It uses Python 3.11 and 3.12, installs the package with
+`pip install -e .`, runs `python -m pytest -q`, then builds a wheel and
+checks that runtime data such as `tasks-public/`, `profiles/`, and
+`baselines/` are included. Runs under the `openclaw` organization use the
+Blacksmith Ubuntu runner; forks fall back to GitHub-hosted `ubuntu-latest`.
+
+## `ci-check-testbox.yml` — Blacksmith Testbox warmup
+
+This workflow exists for the Blacksmith CLI:
+
+```bash
+blacksmith testbox warmup ci-check-testbox.yml --ref main --idle-timeout 90
+blacksmith testbox run --id <tbx_id> "python -m pytest -q"
+```
+
+It installs ClawBench, hydrates provider/HF secrets into
+`~/.clawbench-testbox-live.profile`, restores optional Codex/Claude/Gemini
+dotfiles from repo or org secrets, and installs
+`~/.local/bin/clawbench-testbox-env` for commands that need that live auth.
 
 ## `sync-to-hf-space.yml` — auto-mirror main to the HF Space
 
 Mirrors every push to `main` into the HF Space git remote so
-[huggingface.co/spaces/ScoootScooob/clawbench](https://huggingface.co/spaces/ScoootScooob/clawbench)
+[huggingface.co/spaces/openclaw/clawbench](https://huggingface.co/spaces/openclaw/clawbench)
 always tracks GitHub `main`. GitHub becomes the single source of truth;
 the HF Space is a pure deploy target.
 
 ## One-time setup (required before the workflow can succeed)
 
-The workflow needs **two repository secrets**. Neither is checked into
-the repo; you add them via the GitHub UI.
+The workflow needs one repository secret. It can also use an optional
+fallback username secret.
 
 ### 1. Get a Hugging Face access token
 
@@ -34,13 +51,13 @@ the repo; you add them via the GitHub UI.
 
 ### 2. Add the secrets to this repo
 
-1. Go to <https://github.com/scoootscooob/clawbench/settings/secrets/actions>
-2. Click **"New repository secret"** and add each of these:
+1. Go to <https://github.com/openclaw/clawbench/settings/secrets/actions>
+2. Click **"New repository secret"** and add:
 
    | Name          | Value                                                      |
    |---------------|------------------------------------------------------------|
    | `HF_TOKEN`    | The write-scoped HF token you created in step 1            |
-   | `HF_USERNAME` | `ScoootScooob` (the owner half of the Space path)          |
+   | `HF_USERNAME` | Optional fallback if token introspection fails             |
 
 3. Save both.
 
@@ -68,18 +85,18 @@ status under the Actions tab for any commit.
   workflow mirror it.
 - **Failure modes:**
   - **Missing secrets** → the `Verify required secrets` step fails with
-    a clear error message telling you what to add.
+    a clear error message telling you to add `HF_TOKEN`.
   - **Revoked token** → push fails with a 401; check that `HF_TOKEN`
     still has Write scope on <https://huggingface.co/settings/tokens>.
-  - **Wrong username** → push fails with a repo-not-found error; make
-    sure `HF_USERNAME` matches the Space owner in the URL.
+  - **Missing Space** → the workflow creates the Docker Space before
+    pushing, using `HF_SPACE_ID` or the default `openclaw/clawbench`.
 
 ## Optional: change the target Space
 
 If you ever mirror to a different Space (e.g. a staging copy), set a
 repository variable (not a secret) named `HF_SPACE_ID` to the new
 Space ID, for example `yourname/clawbench-staging`. The workflow
-defaults to `ScoootScooob/clawbench` when the variable is unset.
+defaults to `openclaw/clawbench` when the variable is unset.
 
 ## Why `--force`?
 

@@ -20,13 +20,11 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field, asdict
-from typing import Iterable
 
 from clawbench.profile import (
     PluginManifest,
     PluginProfile,
     RegistrationTrace,
-    TOOL_FAMILIES,
 )
 from clawbench.schemas import Transcript
 from clawbench.trajectory import classify_tool_call

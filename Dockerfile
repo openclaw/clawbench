@@ -1,7 +1,8 @@
 # ClawBench HF Docker Space
-# Layer the benchmark harness on top of the official OpenClaw image.
+# Layer the benchmark harness on top of a pinned OpenClaw image.
 
-FROM ghcr.io/openclaw/openclaw:latest
+ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:2e32f4f2e4f653f12d5dc6e5c93cc71e60f49d1dfaf061b18e53c3e61a38fb48
+FROM ${OPENCLAW_IMAGE}
 
 USER root
 
@@ -21,9 +22,11 @@ RUN npx -y playwright@1.59.1 install --with-deps chromium && \
 ENV HOME=/home/node PATH=/home/node/.local/bin:$PATH
 WORKDIR /home/node/app
 
-COPY --chown=node:node pyproject.toml README.md ./
+COPY --chown=node:node pyproject.toml README.md CLAWBENCH_V0_4_SPEC.md PARTNER_TRACE_SPEC.md ./
 COPY --chown=node:node clawbench/ clawbench/
-COPY --chown=node:node tasks/ tasks/
+COPY --chown=node:node tasks-public/ tasks-public/
+COPY --chown=node:node tasks-domain/ tasks-domain/
+COPY --chown=node:node profiles/ profiles/
 COPY --chown=node:node baselines/ baselines/
 COPY --chown=node:node app.py .
 
@@ -35,7 +38,7 @@ RUN mkdir -p \
     /home/node/.openclaw/agents/dev \
     /home/node/.openclaw/agents/main/agent && \
     chown -R node:node /data /home/node/.openclaw && \
-    chmod -R 777 /data /home/node/.openclaw
+    chmod -R 775 /data /home/node/.openclaw
 
 USER node
 

@@ -7,8 +7,9 @@ from clawbench.tasks import load_all_tasks
 
 def test_load_all_tasks_returns_full_corpus():
     tasks = load_all_tasks()
-    # v0.5 expanded the corpus from 20 to 40 tasks across tiers 1-5.
-    assert len(tasks) >= 20
+    # Public Core release has 19 tasks; full private dev set has 40.
+    # Either must cover tiers 1-5 and carry capability/subset/judge metadata.
+    assert len(tasks) >= 19
     assert {task.tier.value for task in tasks} == {"tier1", "tier2", "tier3", "tier4", "tier5"}
     assert any(task.capabilities for task in tasks)
     assert any(task.subsets for task in tasks)
@@ -37,24 +38,29 @@ def test_load_all_tasks_supports_pool_subset_and_capability_filters():
 
 
 def test_workspace_setup_preserves_nested_asset_paths(tmp_path: Path):
-    task = next(task for task in load_all_tasks() if task.id == "t1-architecture-brief")
+    # Use a task from the Core v1 public set (tasks-public/) so this test
+    # passes whether the dev has private tasks/ or only the public release.
+    # t4-browser-research-and-code has both flat files (report_client.py,
+    # serve_docs.py) and nested dirs (docs/, tests/).
+    task = next(task for task in load_all_tasks() if task.id == "t4-browser-research-and-code")
     harness = BenchmarkHarness(gateway_config=GatewayConfig(), model="test-model", randomize_order=False)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
     harness._setup_workspace(task, workspace)
 
-    assert (workspace / "app.py").exists()
-    assert (workspace / "shop" / "cart.py").exists()
-    assert (workspace / "tests" / "test_smoke.py").exists()
+    assert (workspace / "report_client.py").exists()
+    assert (workspace / "docs" / "index.html").exists()
+    assert (workspace / "tests" / "test_report_client.py").exists()
 
 
 def test_selected_tasks_include_judge_rubrics():
+    # All assertions use task IDs from the Core v1 public set so CI
+    # (without the private tasks/) reproduces locally.
     tasks = {task.id: task for task in load_all_tasks()}
 
-    assert tasks["t1-architecture-brief"].judge is not None
+    assert tasks["t1-bugfix-discount"].judge is not None
+    assert tasks["t3-feature-export"].judge is not None
     assert tasks["t4-browser-research-and-code"].judge is not None
     assert tasks["t4-delegation-repair"].judge is not None
-    assert tasks["t5-contradictory-requirements"].judge is not None
     assert tasks["t5-hallucination-resistant-evidence"].judge is not None
-    assert tasks["t5-impossible-graceful-fail"].judge is not None

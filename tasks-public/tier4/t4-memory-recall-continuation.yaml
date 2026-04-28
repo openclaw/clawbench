@@ -1,0 +1,99 @@
+id: t4-memory-recall-continuation
+name: "Tier 4: Memory Recall Continuation"
+tier: tier4
+family: multi_tool
+surface: coding
+pool: public_dev
+subsets: [hard]
+capabilities: [memory_continuation, multifile_reasoning]
+timeout_seconds: 720
+setup:
+  asset_packs:
+    - t4_memory_recall_continuation
+
+phases:
+  - name: prep
+    user:
+      max_turns: 2
+      turns:
+        - message: "Read `docs/release_notes.md`. There are THREE distinct facts under 'Feature flags to configure' that we need to codify later. Store each as a SEPARATE memory entry (use distinct keys like `beta-regions`, `retry-budget`, `apac-gating`), and also write all three into `handoff.md`. Do not codify any of the operational notes (those are team-facing context only, not flags). Do not change `flags.py` yet."
+  - name: implementation
+    user:
+      max_turns: 2
+      turns:
+        - message: "Start fresh and continue from your earlier notes. Update `flags.py` so the tests pass (there are three flags to set). I am intentionally not repeating the rollout details."
+        - message: "You already stored those details earlier as separate memory entries. Use your saved memories or `handoff.md` instead of rereading the release notes."
+          after_assistant_turns: 1
+          when_assistant_contains: "can't|cannot|missing|don't have|do not have|not repeating|blocked"
+
+completion:
+  # Recursive verifier handles the handoff.md content check; strict filename
+  # removed so models can use alternate note names.
+  memory:
+    - key_pattern: "(?i)beta.*region|region.*beta"
+      exists: true
+      value_contains:
+        - "us"
+        - "eu"
+    - key_pattern: "(?i)retry.*budget|budget.*retry"
+      exists: true
+      value_contains:
+        - "3"
+    - key_pattern: "(?i)apac"
+      exists: true
+      value_contains:
+        - "2026.3"
+  execution_checks:
+    - name: "flags tests (beta regions, retry budget, APAC gating)"
+      command: "pytest -q"
+    - name: "handoff captures all three facts"
+      command: "python3 verify_handoff.py"
+
+trajectory:
+  required_families: ["read", "memory", "edit", "execute"]
+  required_pre_edit_families: ["read", "memory"]
+  required_post_edit_families: ["execute"]
+  min_distinct_families: 4
+  min_pre_edit_exploration_calls: 2
+  min_post_edit_verification_calls: 1
+  require_read_before_mutation: true
+  require_self_verification: true
+
+behavior:
+  require_plan: true
+  require_progress_updates: true
+
+judge:
+  rubric: |
+    You are grading a single ClawBench agent run for task t4-memory-recall-continuation (Tier 4: Memory Recall Continuation).
+    
+    Score the agent on a scale from 0.0 to 1.0:
+      1.0 = the agent's output fully and correctly answers what the user asked,
+            in a way the user could actually use without rework.
+      0.7 = mostly correct and usable, with minor issues or missed nuances.
+      0.4 = the agent attempted the task and produced something on-topic, but
+            the result is incomplete, partially wrong, or hard to use.
+      0.0 = the agent failed entirely, refused without justification, or
+            fabricated information.
+    
+    Important grading guidance:
+      - Don't penalize the agent for writing artifacts to a non-standard path
+        (e.g. memory/2026-04-10.md instead of notes/quick_note.md). What matters
+        is that the user could find and use the result, not which exact filename
+        or directory was used. Search the entire workspace for the agent's work.
+      - Don't penalize the agent for being terse or for skipping non-essential
+        structure if the core deliverable is correct.
+      - DO penalize hallucinated content, missing required information, and
+        refusal to engage with the task.
+      - DO penalize obvious correctness errors (wrong sums, wrong dates, wrong
+        facts).
+    
+    Capability tags for this task: memory_continuation, multifile_reasoning.
+    Task family: multi_tool.
+    
+    Return JSON only with keys: score, confidence, reason, rubric_hits, rubric_misses.
+  passing_threshold: 0.7
+  include_transcript: true
+  include_completion_feedback: true
+  max_artifact_chars: 6000
+  max_transcript_chars: 6000

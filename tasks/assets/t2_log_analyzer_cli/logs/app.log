@@ -1,6 +1,0 @@
-2026-03-10T09:00:00Z level=INFO service=api message=started
-2026-03-10T09:00:01Z level=ERROR service=api message=timeout
-2026-03-10T09:00:02Z level=WARNING service=worker message=retrying
-2026-03-10T09:00:03Z level=ERROR service=worker message=crashed
-2026-03-10T09:00:04Z level=INFO service=worker message=recovered
-

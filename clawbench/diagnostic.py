@@ -17,16 +17,13 @@ leaderboards.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
 from typing import Any
 
 from clawbench.factor_analysis import FactorAnalysisReport, analyze
 from clawbench.prediction import (
     HistoricalDatabase,
     HistoricalRun,
-    PredictionReport,
     attribute_surprise,
     predict_profile,
 )

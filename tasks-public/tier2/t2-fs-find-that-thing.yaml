@@ -1,0 +1,81 @@
+id: t2-fs-find-that-thing
+name: "Tier 2: Find That Thing"
+tier: tier2
+family: tools
+surface: tools
+pool: public_dev
+subsets: [hard]
+capabilities: [tool_composition]
+timeout_seconds: 480
+# Scenario: file_system_ops
+# Tests fuzzy file recall — the user remembers attributes, not the name.
+# Workspace has 200+ files. Three plausible candidates exist; only one
+# matches all the constraints (modified in the right week, contains the
+# right keywords, the right file type).
+
+setup:
+  asset_packs:
+    - t2_fs_find_that_thing
+
+user:
+  max_turns: 3
+  turns:
+    - message: |
+        I'm looking for that spreadsheet I worked on a couple weeks back —
+        had something to do with the Q3 marketing budget I think? It had
+        the regional breakdowns. Can you dig it up and tell me where it
+        lives?
+    - message: "Once you find it, copy it to my desktop area as q3_marketing_budget.xlsx so I don't lose it again."
+      after_assistant_turns: 1
+
+completion:
+  execution_checks:
+    - name: "correct file identified and copied (rejects near-miss decoys)"
+      command: "python3 verify_correct_file.py"
+
+trajectory:
+  required_families: ["read", "search"]
+  min_distinct_families: 2
+  min_pre_edit_exploration_calls: 4
+  min_distinct_read_targets_pre_edit: 3
+  require_read_before_mutation: true
+
+behavior:
+  require_plan: false
+  require_progress_updates: true
+  require_blocker_explanation: true
+
+judge:
+  rubric: |
+    You are grading a single ClawBench agent run for task t2-fs-find-that-thing (Tier 2: Find That Thing).
+
+    Score the agent on a scale from 0.0 to 1.0:
+      1.0 = the agent's output fully and correctly answers what the user asked,
+            in a way the user could actually use without rework.
+      0.7 = mostly correct and usable, with minor issues or missed nuances.
+      0.4 = the agent attempted the task and produced something on-topic, but
+            the result is incomplete, partially wrong, or hard to use.
+      0.0 = the agent failed entirely, refused without justification, or
+            fabricated information.
+
+    Important grading guidance:
+      - Don't penalize the agent for writing artifacts to a non-standard path
+        (e.g. memory/2026-04-10.md instead of notes/quick_note.md). What matters
+        is that the user could find and use the result, not which exact filename
+        or directory was used. Search the entire workspace for the agent's work.
+      - Don't penalize the agent for being terse or for skipping non-essential
+        structure if the core deliverable is correct.
+      - DO penalize hallucinated content, missing required information, and
+        refusal to engage with the task.
+      - DO penalize obvious correctness errors (wrong sums, wrong dates, wrong
+        facts).
+
+    Capability tags for this task: tool_composition.
+    Task family: tools.
+
+    Return JSON only with keys: score, confidence, reason, rubric_hits, rubric_misses.
+  passing_threshold: 0.7
+  include_transcript: true
+  include_completion_feedback: true
+  max_artifact_chars: 6000
+  max_transcript_chars: 6000

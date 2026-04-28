@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import math
 import re
-from typing import Any
 
 from clawbench.schemas import ToolCall, TrajectoryExpectations, TrajectoryResult, Transcript
 

@@ -26,4 +26,4 @@ services:
     volumes:
       - ./data:/data  # Persistent storage (mimics HF /data mount)
       - ${HOME}/.openclaw:/home/node/.openclaw  # Reuse host gateway config (openrouter key + model registry)
-      - ./profiles:/home/node/app/profiles:ro  # Profiles aren't baked into the image
+      - ./profiles:/home/node/app/profiles:ro  # Optional local profile overrides

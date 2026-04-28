@@ -16,6 +16,7 @@ import datetime
 import json
 import logging
 import os
+import tempfile
 from enum import Enum
 from pathlib import Path
 
@@ -37,18 +38,35 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
+ACTIVE_JOB_STATUSES = {JobStatus.PENDING, JobStatus.EVALUATING}
+
+
 class SubmissionRequest(BaseModel):
     model: str  # e.g. "anthropic/claude-sonnet-4-6"
     provider: str = ""  # e.g. "anthropic"
     api_key_env: str = ""  # Env var name holding the API key (NOT the key itself)
     judge_model: str = ""
-    runs_per_task: int = 5
+    runs_per_task: int = Field(default=3, ge=1, le=10)
     max_parallel_lanes: int = Field(default=1, ge=1, le=8)
     tier: str | None = None  # Filter to a specific tier
     scenario: str | None = None
     prompt_variant: str = "clear"
     submitter: str = ""  # HF username
     notes: str = ""
+
+    def active_fingerprint(self) -> str:
+        """Stable key for deduping equivalent queued/evaluating jobs."""
+        payload = {
+            "model": self.model.strip(),
+            "provider": self.provider.strip(),
+            "judge_model": self.judge_model.strip(),
+            "runs_per_task": self.runs_per_task,
+            "max_parallel_lanes": self.max_parallel_lanes,
+            "tier": self.tier or "",
+            "scenario": self.scenario or "",
+            "prompt_variant": self.prompt_variant,
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 class Job(BaseModel):
@@ -127,12 +145,74 @@ class JobQueue:
         """Persist queue state to local disk."""
         jobs_file = LOCAL_QUEUE_DIR / "jobs.json"
         data = [job.model_dump() for job in self._jobs.values()]
-        jobs_file.write_text(json.dumps(data, indent=2))
+        payload = json.dumps(data, indent=2) + "\n"
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=LOCAL_QUEUE_DIR,
+                prefix="jobs.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp_file:
+                tmp_file.write(payload)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+                tmp_path = Path(tmp_file.name)
+            tmp_path.replace(jobs_file)
+        finally:
+            if tmp_path is not None and tmp_path.exists():
+                tmp_path.unlink()
 
     async def submit(self, request: SubmissionRequest) -> Job:
         """Submit a new evaluation job."""
         import uuid
         async with self._lock:
+            max_runs = _env_int("CLAWBENCH_MAX_RUNS_PER_SUBMISSION", 3, minimum=1, maximum=100)
+            if request.runs_per_task > max_runs:
+                raise ValueError(
+                    f"Requested runs_per_task={request.runs_per_task}, but this deployment allows at most {max_runs}."
+                )
+
+            max_lanes = _env_int("CLAWBENCH_MAX_LANES_PER_SUBMISSION", 4, minimum=1, maximum=32)
+            if request.max_parallel_lanes > max_lanes:
+                raise ValueError(
+                    f"Requested max_parallel_lanes={request.max_parallel_lanes}, but this deployment allows at most {max_lanes}."
+                )
+
+            active_jobs = [
+                job for job in self._jobs.values() if job.status in ACTIVE_JOB_STATUSES
+            ]
+            fingerprint = request.active_fingerprint()
+            for job in active_jobs:
+                if job.request.active_fingerprint() == fingerprint:
+                    logger.info(
+                        "Deduped submission for model %s onto active job %s",
+                        request.model,
+                        job.job_id,
+                    )
+                    return job
+
+            max_active_jobs = _env_int("CLAWBENCH_MAX_ACTIVE_QUEUE_JOBS", 25, minimum=1, maximum=1000)
+            if len(active_jobs) >= max_active_jobs:
+                raise ValueError(
+                    f"Queue is at capacity ({len(active_jobs)}/{max_active_jobs} active jobs). "
+                    "Try again after current evaluations finish."
+                )
+
+            max_per_submitter = _env_int("CLAWBENCH_MAX_ACTIVE_JOBS_PER_SUBMITTER", 3, minimum=0, maximum=1000)
+            if max_per_submitter:
+                submitter_key = _submitter_key(request)
+                active_for_submitter = sum(
+                    1 for job in active_jobs if _submitter_key(job.request) == submitter_key
+                )
+                if active_for_submitter >= max_per_submitter:
+                    raise ValueError(
+                        f"Submitter '{submitter_key}' already has {active_for_submitter} active job(s); "
+                        f"limit is {max_per_submitter}."
+                    )
+
             job = Job(
                 job_id=str(uuid.uuid4())[:8],
                 request=request,
@@ -229,7 +309,7 @@ class JobQueue:
                 job.current_run_index = None
                 job.current_run_total = None
                 job.progress_message = (
-                    f"Auto-requeued after stale evaluation lease"
+                    "Auto-requeued after stale evaluation lease"
                     + (f" ({stale_label})" if stale_label else "")
                 )
                 job.stale_requeues += 1
@@ -292,6 +372,10 @@ class JobQueue:
 
     async def _sync_to_hub(self) -> None:
         """Push queue state to HF Dataset for persistence across restarts."""
+        await asyncio.to_thread(self._sync_to_hub_blocking)
+
+    def _sync_to_hub_blocking(self) -> None:
+        """Blocking Hub upload implementation, kept off the event loop."""
         if not HF_TOKEN:
             return
         try:
@@ -314,6 +398,23 @@ class JobQueue:
 
 def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r, using default %d", name, raw, default)
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def _submitter_key(request: SubmissionRequest) -> str:
+    submitter = request.submitter.strip().lower()
+    return submitter or "anonymous"
 
 
 def _parse_iso(value: str | None) -> datetime.datetime | None:

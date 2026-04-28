@@ -136,6 +136,15 @@ submission
 
 Important rule: browser tasks stay serialized on one dedicated lane to avoid Chromium and port-range collisions.
 
+## Submission presets
+
+The Submit tab now exposes two preset audiences so the Space can serve both general Claw users and lower-budget exploratory runs:
+
+- `Claw Users` keeps the full preset catalog, including provider-backed frontier models.
+- `Budget Researchers` narrows the list to local or lower-cost presets such as `ollama/gpt-oss:20b`, `ollama/qwen3.5:27b`, `huggingface/Qwen/Qwen3-32B`, and `huggingface/google/gemma-4-26B-A4B-it`.
+
+You can still enter any custom model ID directly; the preset audience only filters the shortcut catalog and the bulk-submit action.
+
 ## Task inventory
 
 | Task | Tier | Family | Main verification |

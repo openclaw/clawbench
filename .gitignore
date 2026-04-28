@@ -12,4 +12,11 @@ data/
 .DS_Store
 .clawbench/
 reports/
-scripts/
+scripts/__pycache__/
+scripts/*.tmp
+scripts/*.local.py
+
+# Task set is being split into a private holdout + a new public set.
+# Until the public set lands, keep the current tasks/ local-only.
+tasks/
+lab-pr68627/
