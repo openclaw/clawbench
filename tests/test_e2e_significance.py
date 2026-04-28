@@ -25,7 +25,6 @@ If this test passes, the framework is meaningful — not just functional.
 
 from __future__ import annotations
 
-import json
 import random
 import statistics
 import sys
@@ -33,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from clawbench.diagnostic import build_diagnostic, submit_run
+from clawbench.diagnostic import build_diagnostic
 from clawbench.factor_analysis import analyze
 from clawbench.prediction import HistoricalDatabase, HistoricalRun, predict_profile
 from clawbench.profile import (
@@ -337,9 +336,6 @@ def test_fanova_recovers_seeded_effects():
     db, _, _, _ = build_ecosystem(n_profiles=40)
     report = analyze(db, top_k_interactions=10)
     print(f"  factor analysis on {report.n_runs} runs, total variance = {report.total_variance:.4f}")
-
-    # Build a quick lookup of feature → importance
-    me_lookup = {m.feature: m for m in report.main_effects}
 
     # The framework should rediscover that memory and browser are the
     # strongest main effects we seeded.

@@ -1,7 +1,0 @@
-{
-  "groups": [
-    {"id": "design_team", "name": "Design Team", "members": ["sasha", "jin", "rio"]},
-    {"id": "design_council", "name": "Design Council", "members": ["external_advisor_1", "external_advisor_2"]},
-    {"id": "marketing_team", "name": "Marketing Team", "members": ["alex", "sam"]}
-  ]
-}

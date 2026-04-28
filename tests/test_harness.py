@@ -163,3 +163,55 @@ def test_compose_result_from_task_stats_supports_parallel_environment_metadata()
     assert merged_result.environment["parallel_lanes"] == 2
     assert merged_result.environment["requested_parallel_lanes"] == 3
     assert merged_result.environment["browser_tasks_serialized"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_records_adapter_surface(monkeypatch):
+    task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount")
+
+    async def fake_run_single(self, current_task, run_index: int):
+        return TaskRunResult(
+            task_id=current_task.id,
+            tier=current_task.tier.value,
+            family=current_task.family.value,
+            run_index=run_index,
+            run_score=1.0,
+            completion_result=CompletionResult(total_assertions=1, passed_assertions=1, score=1.0),
+        )
+
+    monkeypatch.setattr("clawbench.harness.load_all_tasks", lambda **_: [task])
+    monkeypatch.setattr(BenchmarkHarness, "_run_single", fake_run_single)
+
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test-model",
+        adapter="openclaw",
+        runs_per_task=1,
+        randomize_order=False,
+        print_report=False,
+        quiet=True,
+    )
+
+    result = await harness.run()
+
+    assert result.environment["adapter"] == "openclaw"
+    assert "hermes" in result.environment["known_adapters"]
+
+
+@pytest.mark.asyncio
+async def test_run_rejects_registered_but_unwired_adapter(monkeypatch):
+    task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount")
+    monkeypatch.setattr("clawbench.harness.load_all_tasks", lambda **_: [task])
+
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test-model",
+        adapter="hermes",
+        runs_per_task=1,
+        randomize_order=False,
+        print_report=False,
+        quiet=True,
+    )
+
+    with pytest.raises(ValueError, match="not yet wired"):
+        await harness.run()

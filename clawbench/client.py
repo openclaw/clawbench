@@ -5,10 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import os
 import re
+import shutil
 import subprocess
+import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import websockets
@@ -22,10 +26,10 @@ logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = 3
 DEVICE_IDENTITY_HELPER_JS = r"""
-const crypto = require("node:crypto");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
+const crypto = require("crypto");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
@@ -50,7 +54,7 @@ function fingerprintPublicKey(publicKeyPem) {
 }
 
 function generateIdentity() {
-  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519", {});
   const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
   const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   return {
@@ -150,18 +154,51 @@ process.stdout.write(
 """
 
 
+def _env_float(name: str, default: float) -> float:
+    """Read a float from the environment, falling back on the default.
+
+    Bad, non-finite, or non-positive values are ignored (we log a
+    warning below) so a typo in ``CLAWBENCH_CONNECT_TIMEOUT`` never
+    silently bricks a run.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("ignoring invalid %s=%r; using default %s", name, raw, default)
+        return default
+    if not math.isfinite(value) or value <= 0:
+        logger.warning("ignoring invalid %s=%r; using default %s", name, raw, default)
+        return default
+    return value
+
+
 @dataclass
 class GatewayConfig:
     url: str = "ws://localhost:18789"
     token: str = ""
-    connect_timeout: float = 15.0
+    # First WebSocket connect + protocol handshake + auth challenge.
+    # In practice the gateway is up on ``/healthz`` well before the WS
+    # handshake path is fully ready in containerised / cold-start
+    # setups -- we've measured ``phase0_session_setup`` ~ 20-25s against
+    # a newly started OpenClaw gateway -- so 15s is too aggressive and
+    # turns into spurious ``empty_response`` failures at the task level.
+    # 30s is still short enough to fail fast on a truly wedged gateway.
+    # Override with env var ``CLAWBENCH_CONNECT_TIMEOUT``.
+    connect_timeout: float = field(
+        default_factory=lambda: _env_float("CLAWBENCH_CONNECT_TIMEOUT", 30.0)
+    )
     # Per-RPC timeout. 60s is generous for what are sub-second calls
     # in steady state (agents.create, sessions.create, etc.); fail-fast
     # here converts a transient gateway hang into a recoverable error
     # instead of a 5-minute worker stall. Long-running operations like
     # send_and_wait pass an explicit per-call timeout and do not use
-    # this default.
-    request_timeout: float = 60.0
+    # this default.  Override with env var ``CLAWBENCH_REQUEST_TIMEOUT``.
+    request_timeout: float = field(
+        default_factory=lambda: _env_float("CLAWBENCH_REQUEST_TIMEOUT", 60.0)
+    )
 
 
 class GatewayClient:
@@ -410,11 +447,47 @@ class GatewayClient:
                     max_wait_seconds=2.0,
                 )
             )
+
+            # Some gateway/provider paths persist assistant messages in session
+            # history without emitting complete streaming events. Backfill from
+            # sessions.get if stream capture appears incomplete.
+            history_messages = await self.get_session_messages(session_key)
+            collected_assistant = sum(
+                1 for msg in collected_messages if msg.role == "assistant"
+            )
+            history_assistant = sum(
+                1 for msg in history_messages if msg.role == "assistant"
+            )
+            if history_messages and (
+                len(history_messages) > len(collected_messages)
+                or history_assistant > collected_assistant
+            ):
+                collected_messages = history_messages
         finally:
             self._event_queues.pop(chat_queue_key, None)
             self._event_queues.pop(msg_queue_key, None)
 
         return _correlate_transcript(Transcript(messages=collected_messages))
+
+    async def get_session_messages(self, session_key: str) -> list[TranscriptMessage]:
+        try:
+            response = await self._rpc("sessions.get", {"key": session_key})
+        except Exception:
+            return []
+
+        payload = response.get("payload", {})
+        raw_messages = payload.get("messages", [])
+        if not isinstance(raw_messages, list):
+            return []
+
+        parsed: list[TranscriptMessage] = []
+        for raw in raw_messages:
+            if not isinstance(raw, dict):
+                continue
+            msg = _parse_single_message(raw)
+            if msg is not None:
+                parsed.append(msg)
+        return parsed
 
     async def _rpc(
         self,
@@ -516,9 +589,17 @@ def _build_connect_device(
             "deviceFamily": device_family or "",
         }
     )
+
+    node_executable = _resolve_node_executable()
+    if not node_executable:
+        logger.warning(
+            "Failed to build device identity payload: no Node executable found"
+        )
+        return None
+
     try:
         completed = subprocess.run(
-            ["node", "-e", DEVICE_IDENTITY_HELPER_JS],
+            [node_executable, "-e", DEVICE_IDENTITY_HELPER_JS],
             input=helper_input,
             capture_output=True,
             text=True,
@@ -540,6 +621,25 @@ def _build_connect_device(
         logger.warning("Device identity helper returned unexpected payload: %r", payload)
         return None
     return payload
+
+
+def _resolve_node_executable() -> str | None:
+    """Resolve Node binary, preferring the active Python/conda environment."""
+    candidates: list[str] = []
+
+    # First try the same environment as the active Python interpreter.
+    candidates.append(os.path.join(os.path.dirname(sys.executable), "node"))
+
+    # Then try CONDA_PREFIX when available.
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        candidates.append(os.path.join(conda_prefix, "bin", "node"))
+
+    for candidate in candidates:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+
+    return shutil.which("node")
 
 
 def _is_transient_gateway_connect_error(exc: Exception) -> bool:
@@ -580,6 +680,9 @@ def _parse_single_message(message_data: dict[str, Any]) -> TranscriptMessage | N
             if block_type == "text":
                 text_parts.append(block.get("text", ""))
                 continue
+            if block_type == "output_text":
+                text_parts.append(block.get("text", ""))
+                continue
             if block_type in {"tool_use", "toolCall"}:
                 arguments = block.get("input", block.get("arguments", {}))
                 if isinstance(arguments, str):
@@ -605,6 +708,16 @@ def _parse_single_message(message_data: dict[str, Any]) -> TranscriptMessage | N
                 tool_result_content = _flatten_tool_content(block.get("content", ""))
                 if tool_result_content:
                     text_parts.append(tool_result_content)
+
+    # Some providers surface assistant failures in a dedicated error field
+    # with empty content blocks. Preserve that signal in transcript text.
+    error_message = message_data.get("errorMessage", "")
+    if isinstance(error_message, str) and error_message.strip():
+        text_parts.append(error_message.strip())
+
+    direct_text = message_data.get("text", "")
+    if isinstance(direct_text, str) and direct_text.strip():
+        text_parts.append(direct_text.strip())
 
     if not text_parts and not tool_calls and not tool_result_for:
         return None

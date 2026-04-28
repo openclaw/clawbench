@@ -171,6 +171,50 @@ def test_materialize_lane_runtime_spaces_ports_and_copies_auth(tmp_path: Path, m
     assert (lane1.state_dir / "agents" / "main" / "agent" / "auth-profiles.json").exists()
 
 
+@pytest.mark.asyncio
+async def test_ensure_gateway_closes_parent_log_handle(monkeypatch):
+    worker = EvalWorker(JobQueue())
+    captured_handles = []
+
+    class FakeProcess:
+        returncode = None
+        pid = 123456
+
+        def poll(self):
+            return None
+
+    def fake_popen(*args, stdout=None, **kwargs):
+        captured_handles.append(stdout)
+        return FakeProcess()
+
+    class FakeResponse:
+        status_code = 200
+
+    class FakeAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    async def fake_assert_gateway_control_plane(config):
+        return None
+
+    monkeypatch.setattr(worker, "_find_gateway_cmd", lambda: ["node", "/fake/openclaw.js"])
+    monkeypatch.setattr(worker, "_configure_browser_runtime", lambda gateway_cmd, gateway_env: None)
+    monkeypatch.setattr("clawbench.worker.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(worker, "_assert_gateway_control_plane", fake_assert_gateway_control_plane)
+
+    await worker._ensure_gateway()
+
+    assert captured_handles
+    assert captured_handles[0].closed
+
+
 def test_job_progress_tracker_drops_finished_parallel_lane():
     tracker = JobProgressTracker(total_tasks=20, runs_per_task=3, requested_parallel_lanes=2)
 

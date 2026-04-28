@@ -1,0 +1,14 @@
+# actionlint configuration
+# https://github.com/rhysd/actionlint/blob/main/docs/config.md
+
+self-hosted-runner:
+  labels:
+    - blacksmith-8vcpu-ubuntu-2404
+    - blacksmith-16vcpu-ubuntu-2404
+    - blacksmith-32vcpu-ubuntu-2404
+
+paths:
+  .github/workflows/**/*.yml:
+    ignore:
+      - "shellcheck reported issue.+"
+      - 'label "blacksmith-[0-9]+vcpu-[^"]+" is unknown\.'

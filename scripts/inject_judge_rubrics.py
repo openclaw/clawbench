@@ -12,7 +12,6 @@ being so specific that it leaks the answer to the agent's own model.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import yaml

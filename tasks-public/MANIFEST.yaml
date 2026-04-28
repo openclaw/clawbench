@@ -1,0 +1,206 @@
+manifest_version: 1
+release: clawbench-core-v1
+release_date: 2026-04-20
+benchmark_version: 0.4.0.dev1
+task_count: 19
+
+description: |
+  ClawBench Core v1 — a curated subset of 19 tasks from the internal
+  40-task ClawBench dev pool. Selected so that:
+    (a) all 8 measured frontier models produce the established ranking
+        order in the v4-19-full sweep,
+    (b) coverage is preserved across tiers (1–5) and task families
+        (tools, coding, repo, browser, multi_tool, adversarial),
+    (c) tasks with broken verifiers or near-zero cross-model SNR are
+        dropped.
+
+  Verification: mean run_score across these 19 tasks reproduces the
+  reference ranking with 0 inversions and min adjacent-rank gap of
+  0.0049 (well above the ~0.002 seed-noise floor).
+
+selection_basis:
+  description: |
+    The 19 tasks below were chosen via greedy task selection from the
+    v2026-4-19-full archive so that the cross-model mean reproduces
+    the reference 8-model ordering with 0 inversions and a min
+    adjacent-rank gap of 0.0049 (~2.5x the seed-noise floor).
+  reference_models:
+    - anthropic/claude-opus-4-6
+    - anthropic/claude-opus-4-7
+    - openai/gpt-5.4
+    - anthropic/claude-sonnet-4-6
+    - openrouter/minimax/minimax-m2.7
+    - google/gemini-3.1-pro-preview
+    - openrouter/qwen/qwen3.6-plus
+    - openrouter/moonshotai/kimi-k2.5
+  notes: |
+    Numerical scores intentionally omitted from this manifest. They
+    are openclaw-version-, provider-routing-, and seed-dependent;
+    publishing them would mislead anyone treating them as a stable
+    reference. Run the bench against your own configuration to
+    establish your own baseline.
+
+coverage:
+  tiers:
+    tier1: 2
+    tier2: 6
+    tier3: 5
+    tier4: 5
+    tier5: 1
+  families:
+    tools: 8
+    coding: 2
+    repo: 3
+    browser: 2
+    multi_tool: 3
+    adversarial: 1
+    # Tier 3/4 some families overlap; see per-task manifest below.
+
+tasks:
+  - id: t1-bugfix-discount
+    tier: tier1
+    family: coding
+    capabilities: [bugfix]
+    path: tier1/t1-bugfix-discount.yaml
+    asset_pack: t1_bugfix_discount
+
+  - id: t1-fs-quick-note
+    tier: tier1
+    family: tools
+    capabilities: [structured_output]
+    path: tier1/t1-fs-quick-note.yaml
+    asset_pack: t1_fs_quick_note
+
+  - id: t2-add-tests-normalizer
+    tier: tier2
+    family: coding
+    capabilities: [test_authoring]
+    path: tier2/t2-add-tests-normalizer.yaml
+    asset_pack: t2_add_tests_normalizer
+
+  - id: t2-browser-form-fix
+    tier: tier2
+    family: browser
+    capabilities: [browser_debugging, bugfix]
+    path: tier2/t2-browser-form-fix.yaml
+    asset_pack: t2_browser_form_fix
+
+  - id: t2-config-loader
+    tier: tier2
+    family: repo
+    capabilities: [bugfix, multifile_reasoning]
+    path: tier2/t2-config-loader.yaml
+    asset_pack: t2_config_loader
+
+  - id: t2-fs-find-that-thing
+    tier: tier2
+    family: tools
+    capabilities: [structured_output]
+    path: tier2/t2-fs-find-that-thing.yaml
+    asset_pack: t2_fs_find_that_thing
+
+  - id: t2-msg-summarize-thread
+    tier: tier2
+    family: tools
+    capabilities: [research_synthesis, structured_output]
+    path: tier2/t2-msg-summarize-thread.yaml
+    asset_pack: t2_msg_summarize_thread
+
+  - id: t2-priv-redact-doc
+    tier: tier2
+    family: tools
+    capabilities: [structured_output, graceful_refusal]
+    path: tier2/t2-priv-redact-doc.yaml
+    asset_pack: t2_priv_redact_doc
+
+  - id: t3-data-pipeline-report
+    tier: tier3
+    family: multi_tool
+    capabilities: [structured_output, multifile_reasoning]
+    path: tier3/t3-data-pipeline-report.yaml
+    asset_pack: t3_data_pipeline_report
+
+  - id: t3-data-sql-query
+    tier: tier3
+    family: tools
+    capabilities: [structured_output]
+    path: tier3/t3-data-sql-query.yaml
+    asset_pack: t3_data_sql_query
+
+  - id: t3-feature-export
+    tier: tier3
+    family: repo
+    capabilities: [multifile_reasoning, structured_output]
+    path: tier3/t3-feature-export.yaml
+    asset_pack: t3_feature_export
+
+  - id: t3-msg-inbox-triage
+    tier: tier3
+    family: tools
+    capabilities: [structured_output, multifile_reasoning]
+    path: tier3/t3-msg-inbox-triage.yaml
+    asset_pack: t3_msg_inbox_triage
+
+  - id: t3-web-research-and-cite
+    tier: tier3
+    family: tools
+    capabilities: [research_synthesis]
+    path: tier3/t3-web-research-and-cite.yaml
+    asset_pack: t3_web_research_and_cite
+
+  - id: t4-browser-research-and-code
+    tier: tier4
+    family: browser
+    capabilities: [browser_debugging, research_synthesis]
+    path: tier4/t4-browser-research-and-code.yaml
+    asset_pack: t4_browser_research_and_code
+
+  - id: t4-cross-repo-migration
+    tier: tier4
+    family: repo
+    capabilities: [cross_repo_change, multifile_reasoning]
+    path: tier4/t4-cross-repo-migration.yaml
+    asset_pack: t4_cross_repo_migration
+
+  - id: t4-delegation-repair
+    tier: tier4
+    family: multi_tool
+    capabilities: [delegation, bugfix]
+    path: tier4/t4-delegation-repair.yaml
+    asset_pack: t4_delegation_repair
+
+  - id: t4-life-trip-plan
+    tier: tier4
+    family: tools
+    capabilities: [research_synthesis, structured_output]
+    path: tier4/t4-life-trip-plan.yaml
+    asset_pack: t4_life_trip_plan
+
+  - id: t4-memory-recall-continuation
+    tier: tier4
+    family: multi_tool
+    capabilities: [memory_continuation, multifile_reasoning]
+    path: tier4/t4-memory-recall-continuation.yaml
+    asset_pack: t4_memory_recall_continuation
+
+  - id: t5-hallucination-resistant-evidence
+    tier: tier5
+    family: adversarial
+    capabilities: [research_synthesis, tool_composition]
+    path: tier5/t5-hallucination-resistant-evidence.yaml
+    asset_pack: t5_hallucination_resistant_evidence
+
+notes: |
+  - The full private dev set (tasks/) contains 40 tasks. This Core-19
+    subset is the signal-rich, ranking-consistent public release.
+  - Additional 21 tasks are retained as a private holdout for
+    contamination-resistant measurement of future models.
+  - Task families "creative" and "long-horizon (Tier 6)" are absent
+    from Core v1; planned for a future release.
+  - Known caveats: t4-memory-recall-continuation has a verifier that
+    penalizes agents that respond in conversation rather than via file
+    artifacts. All models face the same verifier, so the comparison is
+    internally fair, but absolute scores understate capability.
+  - t5-hallucination-resistant-evidence has low cross-model SNR (about
+    0.25) in v4-19-full; included for adversarial-family coverage
+    despite this. Consider upgrading verifier in a future release.

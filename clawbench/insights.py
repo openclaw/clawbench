@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 from clawbench.factor_analysis import FactorAnalysisReport, analyze

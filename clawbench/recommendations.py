@@ -101,7 +101,7 @@ def generate_recommendations(
                     ),
                     estimated_delta=0.0,  # removing dead weight is neutral for score
                     confidence=0.9,
-                    evidence=[f"0 tool invocations across all tasks"],
+                    evidence=["0 tool invocations across all tasks"],
                 ))
 
     # --- Signal 2: empty slots -------------------------------------------

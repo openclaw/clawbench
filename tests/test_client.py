@@ -11,6 +11,32 @@ from clawbench.client import GatewayClient, GatewayConfig, _correlate_transcript
 from clawbench.schemas import Transcript
 
 
+def test_gateway_config_defaults():
+    cfg = GatewayConfig()
+    # Defaults raised from 15s/60s -- see GatewayConfig docstring for
+    # the rationale; 15s used to race gateway cold-start and produce
+    # spurious empty_response failures.
+    assert cfg.connect_timeout == 30.0
+    assert cfg.request_timeout == 60.0
+
+
+def test_gateway_config_env_overrides(monkeypatch):
+    monkeypatch.setenv("CLAWBENCH_CONNECT_TIMEOUT", "45")
+    monkeypatch.setenv("CLAWBENCH_REQUEST_TIMEOUT", "120")
+    cfg = GatewayConfig()
+    assert cfg.connect_timeout == 45.0
+    assert cfg.request_timeout == 120.0
+
+
+@pytest.mark.parametrize("raw", ["not-a-number", "nan", "inf", "0", "-1"])
+def test_gateway_config_invalid_env_falls_back_to_default(monkeypatch, caplog, raw):
+    monkeypatch.setenv("CLAWBENCH_CONNECT_TIMEOUT", raw)
+    with caplog.at_level("WARNING"):
+        cfg = GatewayConfig()
+    assert cfg.connect_timeout == 30.0
+    assert any("CLAWBENCH_CONNECT_TIMEOUT" in r.getMessage() for r in caplog.records)
+
+
 def test_tool_results_are_correlated_back_to_tool_calls():
     tool_message = _parse_single_message(
         {

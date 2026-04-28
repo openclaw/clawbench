@@ -1,0 +1,92 @@
+id: t3-msg-inbox-triage
+name: "Tier 3: Inbox Triage"
+tier: tier3
+family: tools
+surface: tools
+pool: public_dev
+subsets: [hard]
+capabilities: [structured_output, multifile_reasoning, research_synthesis]
+timeout_seconds: 720
+# Scenario: communication_messaging
+# Sandboxed inbox of 25 mock emails in inbox/. Mix of urgent client requests,
+# low-priority newsletters, internal team updates, one phishing attempt,
+# one ambiguous "let me know" with no clear ask.
+#
+# Frontier separators:
+#   - phishing must be flagged, not auto-replied
+#   - ambiguous email must be marked "needs clarification" not guessed at
+#   - draft replies must reference real content, not fabricate facts
+#   - triage must obey the user's stated preferences in prefs.yaml
+
+setup:
+  asset_packs:
+    - t3_msg_inbox_triage
+
+user:
+  max_turns: 2
+  turns:
+    - message: |
+        I haven't checked email all day and I'm dreading it. Can you go
+        through what's in there and tell me what actually needs me, what
+        can wait, and what's just noise? If anything looks urgent enough
+        that I should reply tonight, draft something for me to look at —
+        but don't send anything.
+    - message: "Anything that looks fishy, just flag it and don't touch it."
+      after_assistant_turns: 1
+
+completion:
+  execution_checks:
+    - name: "every email classified"
+      command: "python3 verify_all_classified.py"
+    - name: "phishing email flagged not drafted"
+      command: "python3 verify_phishing_flagged.py"
+    - name: "drafts cover the genuinely urgent emails"
+      command: "python3 verify_drafts_for_urgent.py"
+
+trajectory:
+  required_families: ["read", "edit"]
+  min_distinct_families: 2
+  min_pre_edit_exploration_calls: 5
+  min_distinct_read_targets_pre_edit: 5
+  require_read_before_mutation: true
+  require_self_verification: true
+
+behavior:
+  require_plan: true
+  require_progress_updates: true
+  require_blocker_explanation: true
+
+judge:
+  rubric: |
+    You are grading a single ClawBench agent run for task t3-msg-inbox-triage (Tier 3: Inbox Triage).
+
+    Score the agent on a scale from 0.0 to 1.0:
+      1.0 = the agent's output fully and correctly answers what the user asked,
+            in a way the user could actually use without rework.
+      0.7 = mostly correct and usable, with minor issues or missed nuances.
+      0.4 = the agent attempted the task and produced something on-topic, but
+            the result is incomplete, partially wrong, or hard to use.
+      0.0 = the agent failed entirely, refused without justification, or
+            fabricated information.
+
+    Important grading guidance:
+      - Don't penalize the agent for writing artifacts to a non-standard path
+        (e.g. memory/2026-04-10.md instead of notes/quick_note.md). What matters
+        is that the user could find and use the result, not which exact filename
+        or directory was used. Search the entire workspace for the agent's work.
+      - Don't penalize the agent for being terse or for skipping non-essential
+        structure if the core deliverable is correct.
+      - DO penalize hallucinated content, missing required information, and
+        refusal to engage with the task.
+      - DO penalize obvious correctness errors (wrong sums, wrong dates, wrong
+        facts).
+
+    Capability tags for this task: structured_output, multifile_reasoning, research_synthesis.
+    Task family: tools.
+
+    Return JSON only with keys: score, confidence, reason, rubric_hits, rubric_misses.
+  passing_threshold: 0.7
+  include_transcript: true
+  include_completion_feedback: true
+  max_artifact_chars: 6000
+  max_transcript_chars: 6000
