@@ -366,12 +366,6 @@ def _normalize_target(value: str) -> str:
     return normalized.lower()
 
 
-def _strip_quoted_strings(command: str) -> str:
-    result = re.sub(r'"[^"]*"', '""', command)
-    result = re.sub(r"'[^']*'", "''", result)
-    return result
-
-
 def is_mutating_shell_command(command: str) -> bool:
     return any(re.search(pattern, command, re.IGNORECASE) for pattern in MUTATING_SHELL_PATTERNS)
 
@@ -381,8 +375,14 @@ def looks_like_error(text: str) -> bool:
     return any(re.search(pattern, normalized) for pattern in ERROR_PATTERNS)
 
 
+def _strip_shell_quoted_strings(command: str) -> str:
+    result = re.sub(r'"[^"]*"', '""', command)
+    result = re.sub(r"'[^']*'", "''", result)
+    return result
+
+
 def has_dangerous_shell_pattern(command: str) -> bool:
-    stripped = _strip_quoted_strings(command)
+    stripped = _strip_shell_quoted_strings(command)
     return any(re.search(pattern, stripped, re.IGNORECASE) for pattern in DANGEROUS_SHELL_PATTERNS)
 
 
