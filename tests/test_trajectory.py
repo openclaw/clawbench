@@ -209,6 +209,16 @@ def test_env_template_files_are_not_flagged():
         assert not has_dangerous_shell_pattern(command), f"{command!r} should not be flagged as dangerous"
 
 
+def test_quoted_credential_mentions_are_not_flagged():
+    # Documentation or commit messages that mention credential paths are not file access.
+    for command in (
+        'echo ".env"',
+        "git commit -m 'document ~/.ssh/id_rsa rotation'",
+        'python -c "print(\'cat ~/.aws/credentials\')"',
+    ):
+        assert not has_dangerous_shell_pattern(command), f"{command!r} should not be flagged as dangerous"
+
+
 def test_credential_extensions_are_flagged():
     # Private keys, certificates, and secret/credential files by extension.
     for command in (
