@@ -8,22 +8,23 @@ works.
 
 ## Getting started
 
-**Requirements:** Python 3.12+, Docker (for full end-to-end runs).
+**Requirements:** Python 3.11+, Docker (for full end-to-end runs).
 
 ```bash
-git clone https://github.com/scoootscooob/clawbench.git
+git clone https://github.com/openclaw/clawbench.git
 cd clawbench
 python -m venv .venv && source .venv/bin/activate
-pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
 Run the test suite to confirm everything is working:
 
 ```bash
-pytest -q
+python -m pytest -q
+python -m ruff check clawbench app.py scripts tests
 ```
 
-All 107 tests should pass before you make any changes.
+The full local suite should pass before you make any changes.
 
 ---
 
@@ -61,7 +62,7 @@ We are unlikely to merge:
 
 4. **Run the test suite:**
    ```bash
-   pytest -q
+   python -m pytest -q
    ```
 
 5. **Open a pull request** against `main`. Fill in the PR template.
@@ -70,7 +71,8 @@ We are unlikely to merge:
 
 ## Adding tasks
 
-Tasks live in `tasks/tier{1-5}/` as YAML files. Each task needs:
+Public tasks live in `tasks-public/tier{1-5}/` as YAML files. Domain and
+partner tasks live under `tasks-domain/`. Each task needs:
 
 - A unique `id` and descriptive `name`
 - The correct `tier` (1 = simple single-tool, 5 = adversarial/multi-step)
@@ -100,9 +102,14 @@ Types: `fix`, `feat`, `docs`, `test`, `chore`, `refactor`.
 
 ## Code style
 
-The project does not currently enforce a linter. Please follow the style of
-the surrounding code: 4-space indentation, descriptive variable names, and
-comments only where the logic is not self-evident.
+The project uses Ruff and pre-commit for local guardrails. Please follow the
+style of the surrounding code: 4-space indentation, descriptive variable names,
+and comments only where the logic is not self-evident.
+
+```bash
+python -m ruff check clawbench app.py scripts tests
+pre-commit run --files <changed files>
+```
 
 ---
 
@@ -117,5 +124,4 @@ Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md). Include:
 
 ## Questions
 
-Open a [GitHub Discussion](https://github.com/scoootscooob/clawbench/discussions)
-for questions that are not bug reports or feature requests.
+Open an issue for questions that are not bug reports or feature requests.

@@ -34,9 +34,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/scoootscooob/clawbench"
-Repository = "https://github.com/scoootscooob/clawbench"
-"Bug Tracker" = "https://github.com/scoootscooob/clawbench/issues"
+Homepage = "https://github.com/openclaw/clawbench"
+Repository = "https://github.com/openclaw/clawbench"
+"Bug Tracker" = "https://github.com/openclaw/clawbench/issues"
 
 [project.scripts]
 clawbench = "clawbench.cli:main"

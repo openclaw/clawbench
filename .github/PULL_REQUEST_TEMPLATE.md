@@ -14,4 +14,5 @@
 
 <!-- Describe new or updated tests. If no tests were added, explain why none are needed. -->
 
-- [ ] `pytest -q` passes locally
+- [ ] `python -m pytest -q` passes locally
+- [ ] `python -m ruff check clawbench app.py scripts tests` passes locally, or the change is docs-only
