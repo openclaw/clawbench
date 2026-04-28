@@ -1,3 +1,0 @@
-BETA_REGIONS = []
-RETRY_BUDGET = 0
-

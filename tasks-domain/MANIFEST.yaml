@@ -1,0 +1,163 @@
+manifest_version: 1
+release: clawbench-domain-v0
+status: scaffold
+purpose: |
+  Domain coverage scaffold for proving that model + general harness + plugins
+  covers the jobs served by most agent SaaS products. This is not the small
+  public Core v1 benchmark. It is the planned expansion corpus.
+
+relationship_to_core_v1: |
+  tasks-public/Core v1 is the public, signal-curated reproducibility set.
+  tasks-domain is the domain coverage and ablation suite. Core v1 can stay
+  small; domain coverage should grow through templates and private variants.
+
+domains:
+  - id: crm
+    label: CRM
+    representative_jobs:
+      - lead enrichment
+      - account update from meeting notes
+      - opportunity risk summary
+      - duplicate contact cleanup
+      - follow-up task creation
+    plugin_requirements: [browser, crm_api, docs, search, memory]
+    verifier_contracts: [api_state, structured_artifact, cited_evidence]
+
+  - id: support
+    label: Support
+    representative_jobs:
+      - ticket triage
+      - macro draft with policy evidence
+      - escalation routing
+      - refund eligibility lookup
+      - customer timeline summary
+    plugin_requirements: [browser, support_api, knowledge_base, email]
+    verifier_contracts: [api_state, policy_match, cited_evidence]
+
+  - id: email_calendar
+    label: Email and calendar
+    representative_jobs:
+      - thread summarization
+      - meeting scheduling
+      - follow-up drafting
+      - conflict detection
+      - contact-aware prioritization
+    plugin_requirements: [email, calendar, contacts, memory]
+    verifier_contracts: [calendar_state, draft_content, no_duplicate_state]
+
+  - id: docs_sheets_slides
+    label: Docs, sheets, slides
+    representative_jobs:
+      - spreadsheet cleanup
+      - deck update
+      - document redaction
+      - chart generation
+      - report formatting
+    plugin_requirements: [filesystem, spreadsheet, document, slides, charting]
+    verifier_contracts: [file_structure, rendered_diff, formula_check]
+
+  - id: project_management
+    label: Project management
+    representative_jobs:
+      - issue grooming
+      - sprint status update
+      - dependency tracking
+      - stale task cleanup
+      - launch checklist synthesis
+    plugin_requirements: [pm_api, repo, docs, notifications]
+    verifier_contracts: [api_state, link_integrity, dependency_state]
+
+  - id: finance_ops
+    label: Finance ops
+    representative_jobs:
+      - invoice reconciliation
+      - expense categorization
+      - budget variance report
+      - payment exception triage
+      - tax document checklist
+    plugin_requirements: [spreadsheet, accounting_api, document, ocr]
+    verifier_contracts: [numeric_tolerance, ledger_delta, audit_trail]
+
+  - id: data_analytics
+    label: Data analytics
+    representative_jobs:
+      - SQL answer
+      - dashboard explanation
+      - ETL patch
+      - anomaly investigation
+      - chart specification
+    plugin_requirements: [database, notebook, filesystem, bi_api]
+    verifier_contracts: [query_result, execution_check, chart_spec]
+
+  - id: security_admin
+    label: Security admin
+    representative_jobs:
+      - access review
+      - incident timeline
+      - secret rotation plan
+      - policy exception review
+      - audit log evidence packet
+    plugin_requirements: [identity_api, logs, repo, policy_docs]
+    verifier_contracts: [policy_state, cited_logs, refusal_gate]
+
+  - id: ecommerce_ops
+    label: Ecommerce ops
+    representative_jobs:
+      - catalog update
+      - order exception handling
+      - promo QA
+      - inventory reconciliation
+      - returns policy response
+    plugin_requirements: [storefront_api, spreadsheet, browser, email]
+    verifier_contracts: [api_state, price_check, order_state]
+
+  - id: devtools
+    label: Devtools
+    representative_jobs:
+      - repo migration
+      - CI failure repair
+      - release note generation
+      - dependency update
+      - multi-repo contract change
+    plugin_requirements: [shell, git, filesystem, package_registry]
+    verifier_contracts: [test_pass, diff_assertion, changelog_check]
+
+  - id: research
+    label: Research
+    representative_jobs:
+      - evidence memo
+      - citation synthesis
+      - source contradiction handling
+      - market scan
+      - literature extraction
+    plugin_requirements: [browser, web_search, web_fetch, document]
+    verifier_contracts: [citation_check, no_fabrication, source_coverage]
+
+  - id: personal_ops
+    label: Personal ops
+    representative_jobs:
+      - travel planning
+      - household planning
+      - health admin summary
+      - personal finance checklist
+      - recurring reminder setup
+    plugin_requirements: [calendar, browser, memory, document]
+    verifier_contracts: [constraint_satisfaction, state_transition, refusal_gate]
+
+release_targets:
+  domain_count: 12
+  templates_per_domain: 5
+  private_variants_per_template: 3
+  runs_per_configuration: 3
+  public_templates_total: 60
+  private_variants_total: 180
+
+ablation_classes:
+  - id: model_only
+    description: Model with minimal shell/filesystem access.
+  - id: model_plus_harness
+    description: Model plus general OpenClaw-style harness, no domain plugins.
+  - id: core_plugins
+    description: Harness plus common browser, memory, filesystem, and execution plugins.
+  - id: domain_plugins
+    description: Harness plus the plugins needed for each domain state surface.

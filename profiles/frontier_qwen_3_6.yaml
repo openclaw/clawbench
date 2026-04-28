@@ -1,6 +1,6 @@
 profile:
   name: frontier-qwen-3-6
-  base_model: openrouter/qwen/qwen-3.6-plus
+  base_model: openrouter/qwen/qwen3.6-plus
   notes: |
     Frontier agentic coding model comparison: Qwen3.6-Plus (open).
     Alibaba open-weights. Plugin stack IDENTICAL across all 7 profiles so the base

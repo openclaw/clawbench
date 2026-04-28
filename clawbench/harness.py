@@ -40,6 +40,9 @@ from clawbench.tasks import get_assets_dir, load_all_tasks
 logger = logging.getLogger(__name__)
 console = Console()
 
+KNOWN_ADAPTERS = ("openclaw", "hermes", "codex", "claude-code")
+EXECUTABLE_ADAPTERS = {"openclaw"}
+
 
 class _NullCtx:
     """A no-op async context manager used to skip the browser semaphore
@@ -79,6 +82,7 @@ class BenchmarkHarness:
         quiet: bool = False,
         concurrency: int = 1,
         browser_concurrency: int = 1,
+        adapter: str = "openclaw",
     ) -> None:
         self.gateway_config = gateway_config
         self.model = model
@@ -102,9 +106,21 @@ class BenchmarkHarness:
         self.quiet = quiet
         self.concurrency = max(1, int(concurrency))
         self.browser_concurrency = max(1, int(browser_concurrency))
+        self.adapter = adapter
         self.repo_root = Path(__file__).parent.parent
+        self.last_task_runs: dict[str, list[TaskRunResult]] = {}
 
     async def run(self) -> BenchmarkResult:
+        if self.adapter not in KNOWN_ADAPTERS:
+            raise ValueError(
+                f"Unknown adapter '{self.adapter}'. Known adapters: {', '.join(KNOWN_ADAPTERS)}"
+            )
+        if self.adapter not in EXECUTABLE_ADAPTERS:
+            raise ValueError(
+                f"Adapter '{self.adapter}' is registered as a target but is not yet wired "
+                "into the end-to-end scoring harness. Use 'openclaw' for executable runs."
+            )
+
         tasks = load_all_tasks(
             tasks_dir=self.tasks_dir,
             tier=self.tier,
@@ -128,6 +144,7 @@ class BenchmarkHarness:
         if not self.quiet:
             console.print(f"\n[bold]ClawBench v{__version__}[/bold] — {len(tasks)} tasks x {self.runs_per_task} runs")
             console.print(f"Model: [cyan]{self.model}[/cyan]")
+            console.print(f"Adapter: [cyan]{self.adapter}[/cyan]")
             if self.judge_model:
                 console.print(f"Advisory judge: [magenta]{self.judge_model}[/magenta]")
             mode = "serial" if self.concurrency == 1 else f"parallel(concurrency={self.concurrency}, browser={self.browser_concurrency})"
@@ -148,6 +165,7 @@ class BenchmarkHarness:
                 f"({mean_run:.1f}s avg, concurrency={self.concurrency})[/dim]"
             )
 
+        self.last_task_runs = all_results
         return self._aggregate(tasks, all_results)
 
     async def _execute_runs(
@@ -724,6 +742,9 @@ class BenchmarkHarness:
                 "artifact_type": self.artifact_type or "all",
                 "prompt_variant": self.prompt_variant,
                 "judge_model": self.judge_model,
+                "adapter": self.adapter,
+                "known_adapters": list(KNOWN_ADAPTERS),
+                "executable_adapters": sorted(EXECUTABLE_ADAPTERS),
                 "subsets": self.subsets,
                 "capabilities": self.capabilities,
                 "official_only": self.official_only,

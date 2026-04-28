@@ -1,5 +1,0 @@
-BEGIN BACKUP
-key_id=ops-master
-payload=U2FsdGVkX1+never-going-to-work
-END BACKUP
-

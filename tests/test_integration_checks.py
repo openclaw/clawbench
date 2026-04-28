@@ -12,6 +12,15 @@ from clawbench.services import build_runtime_values, start_background_services, 
 from clawbench.tasks import load_all_tasks
 from clawbench.trajectory import evaluate_trajectory
 
+# The task set is moving to a private holdout; the public repo will ship a
+# different task set soon. Until then, skip integration tests that need
+# specific task ids when the tasks directory isn't present.
+_TASKS_DIR = Path(__file__).resolve().parent.parent / "tasks"
+pytestmark = pytest.mark.skipif(
+    not _TASKS_DIR.exists(),
+    reason="tasks/ directory not present (private holdout — public set TBD)",
+)
+
 
 class DummyClient:
     async def _rpc(self, *args, **kwargs):  # pragma: no cover - should not be used in these checks
@@ -52,6 +61,9 @@ async def test_python_completion_check_passes_after_fix(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_node_completion_check_passes_after_fix(tmp_path: Path):
     workspace, task = _prepare_workspace("t2-node-search-patch", tmp_path)
+    # After hardening, render.js also exports emptyNote() with a legitimate
+    # empty body. The scoped fix only patches normalizeNote's body and must
+    # leave emptyNote alone.
     (workspace / "src" / "render.js").write_text(
         "function normalizeNote(note) {\n"
         "  return {\n"
@@ -59,7 +71,13 @@ async def test_node_completion_check_passes_after_fix(tmp_path: Path):
         "    body: note.body.trim(),\n"
         "  };\n"
         "}\n\n"
-        "module.exports = { normalizeNote };\n",
+        "function emptyNote() {\n"
+        "  return {\n"
+        "    title: \"\",\n"
+        "    body: \"\",\n"
+        "  };\n"
+        "}\n\n"
+        "module.exports = { normalizeNote, emptyNote };\n",
         encoding="utf-8",
     )
     (workspace / "src" / "search.js").write_text(

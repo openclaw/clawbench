@@ -117,8 +117,15 @@ def test_trajectory_counts_distinct_read_and_mutation_targets():
 def test_replace_and_insert_tools_are_classified_as_edit():
     # str_replace and insert_text are common in-place mutation tools used by many agents.
     # Both were previously falling through all checks and returning ("unknown", False),
-    # meaning ClawBench never detected their mutations.
-    for tool_name in ("str_replace", "replace_in_file", "insert_text", "insert_at_line"):
+    # and search-first matching also misclassified find_replace/search_replace as search.
+    for tool_name in (
+        "str_replace",
+        "replace_in_file",
+        "insert_text",
+        "insert_at_line",
+        "find_replace",
+        "search_replace",
+    ):
         tool_call = ToolCall(name=tool_name, input={"path": "foo.py"}, success=True)
         family, mutating = classify_tool_call(tool_call)
         assert family == "edit", f"{tool_name!r} classified as {family!r}, expected 'edit'"
@@ -178,6 +185,28 @@ def test_shell_redirect_vs_quoted_operator():
     for cmd in mutating_cases:
         _, mutating = classify_shell_command(cmd)
         assert mutating, f"redirect not detected: {cmd!r}"
+
+
+def test_find_replace_mutation_is_not_misclassified_as_search():
+    transcript = Transcript(
+        messages=[
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="read_file", input={"path": "src/calc.py"}, success=True)]),
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="find_replace", input={"path": "src/calc.py", "find": "return x", "replace": "return x + 1"}, success=True)]),
+            TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="exec", input={"command": "pytest -q"}, success=True)]),
+        ]
+    )
+    expectations = TrajectoryExpectations(
+        required_families=["read", "edit", "execute"],
+        require_read_before_mutation=True,
+        require_self_verification=True,
+        min_distinct_mutation_targets=1,
+    )
+
+    result = evaluate_trajectory(transcript, expectations)
+
+    assert "edit" not in result.required_families_missing
+    assert "search" not in result.distinct_families
+    assert result.distinct_mutation_targets == ["src/calc.py"]
 
 
 def test_memory_search_is_not_treated_as_a_mutation():

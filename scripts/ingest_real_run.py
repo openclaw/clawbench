@@ -23,7 +23,6 @@ from clawbench.profile import (
     PluginManifest,
     PluginProfile,
     PluginProfileEntry,
-    RegistrationTrace,
 )
 
 

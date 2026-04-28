@@ -15,13 +15,11 @@ from clawbench.schemas import TaskDefinition
 def _resolve_tasks_dir() -> Path:
     """Resolve the tasks directory at import time.
 
-    When ClawBench is run from a source checkout, `tasks/` is a sibling of
-    the `clawbench/` package directory. When the package is pip-installed
-    (e.g. inside the HF Space Docker image), that sibling relationship no
-    longer holds — pip copies only `clawbench/` into site-packages, and
-    `tasks/` lives at the Docker WORKDIR instead. This resolver tries a
-    series of candidates in order and falls back to the sibling-of-source
-    path so source runs stay unaffected.
+    When ClawBench is run from a private source checkout, `tasks/` is a
+    sibling of the `clawbench/` package directory. Public checkouts and the
+    HF Space Docker image ship `tasks-public/` instead. This resolver tries a
+    series of candidates in order and falls back to the sibling-of-source path
+    so private source runs stay unaffected.
     """
     # 1. Explicit override via environment variable.
     env_dir = os.environ.get("CLAWBENCH_TASKS_DIR", "").strip()
@@ -36,13 +34,12 @@ def _resolve_tasks_dir() -> Path:
         return sibling
 
     # 3. Current working directory (works when the user runs clawbench from
-    #    a repo root that has tasks/ in it — matches the Dockerfile WORKDIR
-    #    layout `/home/node/app/tasks`).
+    #    a private repo root that has tasks/ in it).
     cwd_dir = Path.cwd() / "tasks"
     if (cwd_dir / "tier1").is_dir():
         return cwd_dir
 
-    # 4. Known Docker/HF Space layout.
+    # 4. Known private Docker/HF Space layout.
     for container_candidate in (
         Path("/home/node/app/tasks"),
         Path("/home/user/app/tasks"),
@@ -51,7 +48,21 @@ def _resolve_tasks_dir() -> Path:
         if (container_candidate / "tier1").is_dir():
             return container_candidate
 
-    # 5. Give up and return the sibling path anyway — task loading will
+    # 5. Fall back to the public task release (tasks-public/) if present.
+    #    This lets CI / external contributors run the test suite without
+    #    the private dev-only tasks/ directory. The public Core release
+    #    uses the same on-disk layout as the private set.
+    for public_candidate in (
+        Path(__file__).parent.parent / "tasks-public",
+        Path.cwd() / "tasks-public",
+        Path("/home/node/app/tasks-public"),
+        Path("/home/user/app/tasks-public"),
+        Path("/app/tasks-public"),
+    ):
+        if (public_candidate / "tier1").is_dir():
+            return public_candidate
+
+    # 6. Give up and return the sibling path anyway — task loading will
     #    fail loudly instead of silently returning an empty task list.
     return sibling
 

@@ -13,15 +13,31 @@ license: mit
 
 # ClawBench
 
-**The agent benchmark that measures what users actually experience.**
+**Rigorous agent evaluation. Signal-curated tasks. Dynamical-systems diagnostics.**
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB.svg?style=flat-square)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB.svg?style=flat-square)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
-[![Tasks: 40](https://img.shields.io/badge/tasks-40-blue.svg?style=flat-square)](#task-suite)
-[![Tests: 107](https://img.shields.io/badge/tests-107-success.svg?style=flat-square)](#testing)
-[![HF Dataset](https://img.shields.io/badge/HF-dataset-yellow.svg?style=flat-square)](https://huggingface.co/datasets/ScoootScooob/clawbench-results)
+[![Core v1: 19 tasks](https://img.shields.io/badge/Core%20v1-19%20tasks-blue.svg?style=flat-square)](tasks-public/)
+[![Diagnostics](https://img.shields.io/badge/diagnostics-dynamical-blueviolet.svg?style=flat-square)](#3-dynamical-systems-diagnostics-how-agents-fail-not-just-whether)
+[![HF Dataset](https://img.shields.io/badge/HF-dataset-yellow.svg?style=flat-square)](https://huggingface.co/datasets/openclaw/clawbench-results)
 
 </div>
+
+---
+
+## What's new in Core v1 (2026-04-20)
+
+A reproducibility-first public release of the benchmark, informed by a full 8-model, 1,080-run sweep audit and five new methodology layers that most agent benchmarks simply don't have:
+
+| Innovation | What it means | Why it matters |
+|---|---|---|
+| **Signal-curated task set** | 19 tasks selected from 40-task dev pool by greedy SNR-preserving elimination | Drops tasks where seed noise exceeds capability signal (21 such tasks exist in the raw 40) |
+| **Variance decomposition** | Measures and reports seed-noise vs capability-signal ratio per task | **47% of 40-task variance is seed noise** — we quantify it; most benchmarks hide it |
+| **Dynamical-systems diagnostics** | Per-run regime classification (trapped / limit-cycle / diffusive / mixed) | Reveals *how* agents fail, not just whether. Inspired by Markov-kernel / attractor-basin framework |
+| **Constraint Index C(q)** | Principled task-weighting via participation ratio + entropy + Bayes prediction | Distinguishes "everyone converges" from "everyone diverges" tasks — enables honest weighted ranking |
+| **Reproducibility-first infrastructure** | Per-container state isolation, judge-infra rejudge pipeline, documented OpenRouter-routing caveats | Eliminates the cascading-failure / silent-judge-error patterns that bias most agent benchmarks |
+
+All of it lives in `scripts/` and `tasks-public/` — auditable code, not opaque numbers.
 
 ---
 
@@ -33,16 +49,14 @@ Then Model A deletes your test fixtures, hallucinates that it ran `pytest` (it d
 
 **The benchmark told you Model A was better. Your users would disagree.**
 
-This happens because every agent benchmark shipping today measures the *endpoint* — did the final file look right? — but throws away the *journey*. They treat the agent as a black box that either produces correct output or doesn't. One run, one number, move on.
+Beyond that, most benchmarks don't tell you:
+- Whether the gap is signal or noise
+- Which tasks actually discriminate models and which are coin-flips
+- How the agent *dynamically* fails — attractor, limit-cycle, goal drift
+- Whether re-running gives the same ranking (spoiler: on most benchmarks, no)
+- What's driving your score — the model, the plugin stack, or the harness version
 
-But that's not how users experience agents. Users experience:
-- **Reliability** — does it work 3 out of 3 times, or 1 out of 3?
-- **Process quality** — did it read the code before editing, or blind-patch and pray?
-- **Safety** — did it `rm -rf` something it shouldn't have?
-- **Failure modes** — when it fails, does it fail gracefully or hallucinate success?
-- **Configuration sensitivity** — is the score coming from the model, or from the plugins wrapped around it?
-
-No existing benchmark captures any of this. ClawBench captures all of it.
+ClawBench addresses all of this. Below is how.
 
 ---
 
@@ -52,8 +66,6 @@ No existing benchmark captures any of this. ClawBench captures all of it.
 
 Every agent run produces a full execution trace: every tool call, every file read, every `pytest` invocation, every retry after failure. Most benchmarks throw this away and check the final state. ClawBench scores *from the trace itself*.
 
-This is why our scoring has four axes, not one:
-
 | Axis | Weight | What it measures | Where it comes from |
 |------|--------|-----------------|-------------------|
 | **Completion** | 40% | Did the work actually get done? | Deterministic verifiers: `pytest`, exit codes, file equality, DOM assertions, memory state |
@@ -61,9 +73,9 @@ This is why our scoring has four axes, not one:
 | **Behavior** | 20% | Was the agent safe and communicative? | Pattern detection: planning, progress updates, destructive command avoidance |
 | **Judge** | 10% | Is the semantic quality good? | LLM evaluation (gated — only contributes when deterministic completion is already near-perfect) |
 
-**The key invariant**: the LLM judge can never rescue a failed deterministic check. If `pytest` fails, the judge score is zeroed. This is enforced in code and tested. It means you can't game ClawBench by producing output that *looks* correct to an LLM but doesn't actually work.
+**The key invariant**: the LLM judge can never rescue a failed deterministic check. If `pytest` fails, the judge score is zeroed. This is enforced in code and tested. You can't game ClawBench by producing output that *looks* correct to an LLM but doesn't actually work.
 
-### 2. We measure reliability, not just capability
+### 2. We measure reliability AND quantify noise
 
 A model that scores 90% on one run and 20% on the next is not a 55% model. It's an unreliable model. Users experience the worst run, not the average.
 
@@ -73,13 +85,81 @@ ClawBench runs every task 3 times and reports:
 - **Taguchi Signal-to-Noise** — asymmetrically penalizes the worst runs, because that's what matters in production
 - **Bootstrap confidence intervals** — 10,000 resamples per task, so you know when a score difference is real vs. noise
 - **Worst-of-n** — the score that actually determines user trust
-- **13 failure modes** — not just "pass/fail" but *how* it failed: `hallucinated_completion`, `tool_misuse`, `verification_skipped`, `state_regression`, `graceful_refusal`, and 8 more
+- **13 failure modes** — `hallucinated_completion`, `tool_misuse`, `verification_skipped`, `state_regression`, `graceful_refusal`, and 8 more (not just "pass/fail")
 
-### 3. We ablate configurations, not just models
+Beyond per-run reliability, we decompose **benchmark-wide variance** into seed-noise vs capability signal:
 
-Here's a finding that reframes the entire benchmarking conversation: on realistic tasks, **swapping the plugin configuration produces score swings 10x larger than swapping the model**. The same Claude Sonnet can beat Claude Opus when wrapped in better tooling.
+```
+SNR(task) = capability_variance(across models) / mean_seed_variance(per model)
+```
 
-If the configuration drives 10x more variance than the model, the benchmark should measure it. ClawBench's v0.5 Configuration Diagnostic does exactly this:
+Findings from the v4-19-full sweep audit:
+- **Only 52.7% of run_score variance is real capability signal**; 47.3% is seed noise
+- **2 tasks have SNR ≥ 5** (reliably discriminate models)
+- **21 tasks have SNR < 1** (seed noise ≥ capability signal; rankings on these tasks are essentially random)
+
+Core v1 drops the noisy tasks and reports variance decomposition alongside rankings. This is the level of rigor most benchmarks don't attempt.
+
+### 3. Dynamical-systems diagnostics: how agents fail, not just whether
+
+Inspired by *"When LLMs Are Dreaming, Where Do They Go?"* — we treat each agent run as a stochastic trajectory in semantic state space and extract signal that flat `run_score` averages away.
+
+Current code-path formulas:
+
+```text
+Per assistant step t:
+x_t = [tool_family_proportions(6), error_flag, normalized_tokens, normalized_text_len, progress]
+drift_t = cosine_distance(x_0, x_t)
+step_t = cosine_distance(x_{t-1}, x_t)
+
+Task-level Constraint Index:
+PR(q) = tr(Σ_q)^2 / tr(Σ_q^2)
+H(q) = -Σ_i p_i log2 p_i,   p_i = λ_i / Σ_j λ_j,   λ = eigvals(Σ_q)
+BOPS(q) = mean_m mean_{i<j} cos(v_{q,m,i}, v_{q,m,j})
+C(q) = -z(PR(q)) - z(H(q)) + z(BOPS(q))
+
+Per-run constraint index used inside the regime classifier:
+PR_run = 1 / Σ_i p_i^2
+constraint_index_run = 1 - (PR_run - 1) / (d - 1)
+
+Variance decomposition:
+seed_var(q) = mean_m Var(run_score_{q,m,*})
+cap_var(q) = Var_m Mean(run_score_{q,m,*})
+SNR(q) = cap_var(q) / (seed_var(q) + 1e-9)
+capability_fraction = mean_q cap_var(q) / (mean_q cap_var(q) + mean_q seed_var(q))
+
+Survival:
+T_F = first assistant turn with empty text and no tool calls,
+      else final assistant turn if run_score < 0.7 and delivery_outcome in {fail, partial}
+S(t) = P(T_F > t)
+h(t) = P(T_F = t | T_F >= t)
+```
+
+Implemented regime classifier in `clawbench/dynamics.py`:
+
+```text
+trapped      if H_tools < 0.5 or (error_rate > 0.6 and std(drift) < 0.05)
+convergent   if std(drift_last_quartile) < 0.1 and mean(step_last_quartile) < 0.15 and error_rate < 0.2
+diffusive    if H_tools > 1.5 and error_rate < 0.15 and constraint_index_run < 0.8
+chaotic      if H_tools > 2.0 and var(step[1:]) > 0.02
+limit_cycle  if max autocorr(centered step[1:], lags 2..5) > 0.3
+unknown      otherwise, or <3 assistant turns
+```
+
+The task-level `C(q)` uses a normalized bag-of-words response vector built from the full assistant trajectory text plus tool-call names and compacted inputs, not just the last assistant turn.
+
+From the v4-19 sweep data:
+- **Gemini 3.1 Pro** exhibits `trapped` regime on 42/120 runs — commits early, doesn't iterate
+- **GPT 5.4** has the most `limit_cycle` runs (20) — tool-use loops, productive or stuck
+- **Kimi K2.5** dies at median turn 3 (worst survival); **GPT 5.4** survives to turn 8 at 60% rate (best)
+
+All scripts under `scripts/` run on cached per-run JSONs with plain numpy-based tooling; no torch or sentence-transformers required.
+
+### 4. We ablate configurations, not just models
+
+On realistic tasks, **swapping the plugin configuration produces score swings 10x larger than swapping the model**. The same Claude Sonnet can beat Claude Opus when wrapped in better tooling.
+
+If the configuration drives 10x more variance than the model, the benchmark should measure it. ClawBench's Configuration Diagnostic:
 
 1. **Fingerprint** your plugin configuration into a typed feature vector (hooks, tools, capabilities, slots)
 2. **Predict** your score before you spend a dollar on compute (k-NN over historical submissions)
@@ -87,7 +167,18 @@ If the configuration drives 10x more variance than the model, the benchmark shou
 4. **Explain** which plugins are actually driving your score (fANOVA factor importance)
 5. **Recommend** specific, evidence-backed configuration changes with estimated impact
 
-No other benchmark can do this, because no other benchmark has access to typed plugin manifests. OpenClaw's plugin-native architecture makes the configuration transparent, not a black box.
+No other benchmark can do this — no other benchmark has access to typed plugin manifests. OpenClaw's plugin-native architecture makes the configuration transparent, not a black box.
+
+### 5. Reproducibility-first infrastructure
+
+The v4-19-full sweep exposed multiple failure modes that silently bias numbers in other benchmarks:
+
+- **Shared state dir contamination** — accumulated `agents/` cruft across sequential sweeps caused `RPC agents.create timed out` cascades. Fixed via per-container `OPENCLAW_STATE_DIR` isolation (`scripts/container_sweep_single.sh`).
+- **Gateway judge failures** — the in-process judge returned "Gateway is restarting" / empty scores on infrastructure hiccups. Fixed via direct-API rejudge pipeline (`scripts/rejudge_all.py`).
+- **OpenRouter provider routing** — slug `z-ai/glm-5.1` canonically routes to different backing models over time. GLM 5.1 scored 0.79 at 14:00 PST, became untestable by 17:00 PST when OpenRouter repointed the slug to a reasoning-enabled variant with insufficient token budget. Numbers measured against OpenRouter-hosted models are explicitly flagged.
+- **Platform version drift** — OpenClaw 4.9 → 4.15-beta.1 shifted scores by +0.13 to +0.29 across all models. When comparing two model runs, build both against the same OpenClaw release.
+
+All of these are documented in code + commit messages. The state-isolation patch + rejudge pipeline + provider caveats turn a flaky harness into one whose drift sources are at least visible.
 
 ---
 
@@ -120,40 +211,6 @@ A user doesn't see a pass/fail. They see an agent that reads their code carefull
 
 ---
 
-## How ablation works: the Configuration Diagnostic
-
-Most benchmarks answer: "which model is best?" ClawBench also answers: "which configuration change will actually improve my score?"
-
-### The pipeline
-
-```
-profile.yaml ──► Fingerprint ──► Predict ──► Run ──► Compare ──► Explain ──► Recommend
-     │              │               │          │         │           │            │
-     │         27 hooks ×       k-NN over    40 tasks   Surprise   fANOVA     Evidence-
-     │        11 tool fams ×   historical     × 3       detection  factor     backed
-     │        10 contracts     submissions    runs      (Δ≥0.15)   importance  changes
-     │                                                                         with ΔE
-```
-
-### What the diagnostic report tells you
-
-| Section | What you learn |
-|---|---|
-| **Predicted score + confidence** | What to expect before you spend compute |
-| **Surprises** | Which tasks deviated from prediction, and why |
-| **Plugin Utilization Audit** | Which plugins loaded but were never invoked (dead weight) |
-| **Manifest vs Reality Gap** | Declared capabilities vs. actually exercised capabilities |
-| **Factor Importance** | Which configuration features actually drive score variance |
-| **Recommendations** | "Add `memory-lancedb`: estimated +0.12 ± 0.04" — backed by neighbor profiles |
-
-Every recommendation cites the specific neighbor profiles that already include the suggested change. No speculative advice.
-
-### Why this matters
-
-Benchmarks today tell you "Opus scores 0.59." They don't tell you *why*, and they don't tell you what to change. ClawBench's diagnostic layer turns a benchmark from a ranking into an optimization tool. You don't just learn where you stand — you learn what to do about it.
-
----
-
 ## The 13 failure modes
 
 When an agent fails, "fail" is not useful information. ClawBench classifies every failure into one of 13 deterministic modes:
@@ -178,17 +235,22 @@ These are surfaced per-run in the result, not hidden in logs. They make failures
 
 ---
 
-## Task suite: 40 tasks across 5 tiers
+## Core v1 task suite: 19 tasks
 
-Tasks are designed to mirror what agent users actually do — not contrived algorithmic puzzles, but realistic multi-step workflows with real tools:
+Core v1 is a signal-curated public release of 19 tasks from the internal 40-task dev pool. Selected for:
+- **0 ranking inversions** — the mean reproduces the reference 8-model order exactly
+- **Preserved coverage** — all 5 tiers and 6 families represented
+- **Dropped noise** — excludes tasks where cross-model SNR < 0.5
 
-| Tier | Tasks | What it tests | Examples |
-|------|-------|---------------|---------|
-| **Tier 1** | 6 | Basic single-tool tasks | Fix a 10-line bug, write a quick note, set a calendar reminder |
-| **Tier 2** | 14 | Multi-step with 2-3 tools | Fix a browser form, search-and-patch a repo, redact a document |
-| **Tier 3** | 11 | Complex multi-tool orchestration | Debug a timezone regression, generate a data pipeline report, triage an inbox |
-| **Tier 4** | 6 | Hard cross-system reasoning | Migrate code across repos, delegate to sub-agents, recall from long context |
-| **Tier 5** | 3 | Adversarial | Contradictory requirements, hallucination traps, impossible tasks requiring graceful refusal |
+| Tier | Core v1 count | What it tests | Examples |
+|------|:---:|---|---|
+| **Tier 1** | 2 | Single-tool basics | Bugfix discount calc, quick file note |
+| **Tier 2** | 6 | Multi-step, 2-3 tools | Config loader repair, browser form fix, priv redaction |
+| **Tier 3** | 5 | Complex orchestration | SQL query analysis, inbox triage, data pipeline report |
+| **Tier 4** | 5 | Cross-system reasoning | Cross-repo migration, delegation repair, memory continuation, browser research+code |
+| **Tier 5** | 1 | Adversarial | Hallucination-resistant evidence |
+
+Full manifest: [`tasks-public/MANIFEST.yaml`](tasks-public/MANIFEST.yaml).
 
 ### Task design principles
 
@@ -200,6 +262,13 @@ Tasks are designed to mirror what agent users actually do — not contrived algo
 
 **Adversarial tier.** Tier 5 tasks are designed to test what most benchmarks can't: does the agent correctly identify when a task is impossible? Does it resist hallucinating evidence that doesn't exist? Does it handle contradictory instructions gracefully? These tasks separate models that are *capable* from models that are *trustworthy*.
 
+### Private holdout (21 tasks)
+
+The remaining 21 tasks from the internal pool stay private:
+- **9 ceiling tasks** — all frontier models score >0.85; don't discriminate at the frontier
+- **9 low-signal tasks** — SNR < 0.5; either broken verifiers or genuinely ambiguous prompts (scheduled for redesign)
+- **3 ranking-inconsistent tasks** — cross-model ordering conflicts with reference ranking (`t2-node-search-patch`, `t5-contradictory-requirements`, `t1-cal-quick-reminder`)
+
 ---
 
 ## The scoring math
@@ -209,53 +278,187 @@ Tasks are designed to mirror what agent users actually do — not contrived algo
 run_score = 0.4 * completion + 0.3 * trajectory + 0.2 * behavior + [0.1 * judge if completion >= 0.9999]
 ```
 
-The judge term is gated: it only contributes when the deterministic completion score is near-perfect. This means you can't get a good score by producing output that *looks* right but doesn't pass execution checks.
+The judge term is gated: it only contributes when the deterministic completion score is near-perfect. You can't get a good score by producing output that *looks* right but doesn't pass execution checks.
 
 ### Per-task score (across 3 runs)
 ```
 task_score = 0.9 * bootstrap_mean(run_scores) + 0.1 * reliability_score
-```
-
-Where:
-```
 reliability = 0.5 * pass^k + 0.3 * pass_rate + 0.2 * variance_score
 ```
 
-`pass^k` is 1 only if ALL runs pass. Not any run — all runs. This is the metric that separates reliable agents from lucky ones.
+`pass^k` is 1 only if ALL runs pass. Not any run — all runs.
 
 ### Taguchi Signal-to-Noise (robustness)
 ```
 S/N = -10 * log10( (1/n) * sum(1/y_i^2) )
 ```
 
-The `1/y_i^2` term means the worst score dominates. A configuration scoring 0.85 average but 0.10 on adversarial tasks is **worse in production** than 0.78 average with a 0.65 floor. Taguchi catches this; mean and stddev don't.
+The `1/y_i^2` term means the worst score dominates. A configuration scoring 0.85 average but 0.10 on adversarial tasks is **worse in production** than 0.78 average with a 0.65 floor.
+
+### SNR-weighted alternative (for ranking differentiation)
+
+Flat-mean compresses frontier model gaps. An alternative that weights tasks by their signal density:
+
+```
+w_q = max(0, SNR(q)) × |C(q)|
+w_q^wins = min(w_q, p95({w_q}))
+
+flat_score(model) = mean_q mean_run_score(model, q) over covered tasks
+weighted_score(model) = Σ_q w_q mean_run_score(model, q) / Σ_q w_q
+winsorized_score(model) = Σ_q w_q^wins mean_run_score(model, q) / Σ_q w_q^wins
+```
+
+Under SNR × |C(q)| winsorized on the same 1,080-run archive, **Opus 4.7 ranks #1** (instead of Opus 4.6 under flat mean) and **GPT 5.4 drops from #3 to #7** — its task-specific cliffs (0.16 on `t3-feature-export`) fall on the highest-signal tasks. This exposes what the flat mean averages away.
+
+Generate alternate rankings: `scripts/snr_weighted_ranking.py`.
+
+---
+
+## Reproducibility caveats
+
+Being honest about what reproduces and what doesn't:
+
+### What reproduces deterministically
+
+- **Fair comparison audit** — given an archive dir, `scripts/audit_runs.py` produces identical numbers every time.
+- **Dynamical diagnostics** — C(q), regime classification, variance decomposition, survival curves: all deterministic functions of the archive.
+- **Rankings at the aggregate level** — top-cluster ranking stable across multiple sweeps when both runs use the same OpenClaw release + direct-API models.
+
+### What drifts
+
+- **Absolute scores** — seed noise is ~0.02 stddev per task per model. Expect run_score to drift within that envelope.
+- **OpenRouter-served models** — `openrouter/*` model slugs can silently re-route to different underlying providers. We observed GLM 5.1 at 0.79 then 0.33 within hours as OpenRouter flipped its backing provider. Pin to canonical versions (e.g., `z-ai/glm-5.1-20260406`) for stable measurement.
+- **OpenClaw platform drift** — 4.9 → 4.15-beta.1 shifted scores by +0.13 to +0.29 across all models. 60-70% reduction in `tool_misuse` and `verification_skipped` failure modes across that jump. Pin the base to reproduce published numbers.
+
+### Mitigating the drift
+
+Build both sides of any comparison from the same source state:
+
+```bash
+docker build -t clawbench .
+docker run --rm --entrypoint openclaw clawbench --version
+# -> records the OpenClaw version of THIS build
+```
+
+When publishing scores, record the OpenClaw version your image
+resolved to and treat numbers from a different version as separate
+populations.
 
 ---
 
 ## Quick start
 
+### Build the image
+
 ```bash
-# Clone + install
-git clone git@github.com:scoootscooob/clawbench.git && cd clawbench
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
+git clone git@github.com:openclaw/clawbench.git && cd clawbench
+cp .env.example .env  # optional: fill tokens for local Docker/HF uploads
+docker build -t clawbench .
 
-# Run a single task
-export OPENCLAW_GATEWAY_TOKEN=<your-token>
-clawbench run --model anthropic/claude-opus-4-6 --task t1-bugfix-discount --runs 3
-
-# Run with a plugin profile (enables Configuration Diagnostic)
-clawbench run --model anthropic/claude-opus-4-6 --profile profiles/frontier_opus_4_6.yaml --runs 3
-
-# Diagnose a profile without running (instant prediction from historical data)
-clawbench diagnose profiles/frontier_opus_4_6.yaml
+# Record the OpenClaw version baked in (for reproducibility):
+docker run --rm --entrypoint openclaw clawbench --version
 ```
 
-### Docker (recommended for reproducibility)
+### Run Core v1 on a model
 
 ```bash
-docker compose up -d
-# Submit jobs via the Gradio UI at http://localhost:7860
+export OPENCLAW_GATEWAY_TOKEN=<your-token>
+
+# Core v1 = 19 specific tasks. List them via the manifest:
+python3 -c "import yaml; m = yaml.safe_load(open('tasks-public/MANIFEST.yaml'));
+             print(' '.join(f'-t {t[\"id\"]}' for t in m['tasks']))"
+
+# Then run:
+clawbench run \
+  --model anthropic/claude-opus-4-6 \
+  --runs 3 \
+  --concurrency 4 \
+  --profile profiles/frontier_opus_4_6.yaml \
+  --judge-model anthropic/claude-sonnet-4-6 \
+  -t t1-bugfix-discount -t t1-fs-quick-note \
+  -t t2-add-tests-normalizer -t t2-browser-form-fix \
+  -t t2-config-loader -t t2-fs-find-that-thing \
+  -t t2-msg-summarize-thread -t t2-priv-redact-doc \
+  -t t3-data-pipeline-report -t t3-data-sql-query \
+  -t t3-feature-export -t t3-msg-inbox-triage \
+  -t t3-web-research-and-cite \
+  -t t4-browser-research-and-code -t t4-cross-repo-migration \
+  -t t4-delegation-repair -t t4-life-trip-plan \
+  -t t4-memory-recall-continuation \
+  -t t5-hallucination-resistant-evidence \
+  -o results/opus46_core_v1.json
+```
+
+### Analyze a real archive
+
+```bash
+# Fair-comparison audit
+python3 scripts/audit_runs.py
+python3 scripts/generate_fair_report.py --tag v2026-4-19-full
+
+# Posterior dynamics + ranking from cached per-run JSONs
+python3 scripts/run_posterior_dynamics_pipeline.py \
+  --archive-dir .clawbench/run_cache \
+  --reports-dir results/posterior_reports \
+  --include-dynamics-report \
+  --output-dir results/per_model_dynamics
+
+# Writes:
+#   results/posterior_reports/constraint_index.json
+#   results/posterior_reports/regimes.json
+#   results/posterior_reports/variance_decomposition.json
+#   results/posterior_reports/survival_analysis.json
+#   results/posterior_reports/snr_weighted_ranking.json
+#   results/posterior_reports/EVAL_REPORT_DYNAMICAL.md
+#   results/per_model_dynamics/<safe_model_name>/dynamics.json
+#   results/per_model_dynamics/<safe_model_name>/*.png
+```
+
+If you only want one model's offline dynamics bundle:
+
+```bash
+clawbench dynamics-report \
+  --archive-dir .clawbench/run_cache \
+  --model ollama/gpt-oss:20b \
+  --output-dir results/gptoss_dynamics
+
+# Quick CI path: skip plot rendering
+clawbench dynamics-report \
+  --archive-dir .clawbench/run_cache \
+  --model ollama/gpt-oss:20b \
+  --output-dir results/gptoss_dynamics \
+  --no-plots
+
+# Writes:
+#   results/gptoss_dynamics/dynamics.json
+```
+
+### Running locally with small models (Ollama)
+
+A single consumer GPU running an open-weight model is enough to develop plugin profiles and validate algorithmic ideas — no API keys or cloud spend required.
+
+```bash
+ollama pull gpt-oss:20b
+export OPENCLAW_GATEWAY_TOKEN=<your-gateway-token>
+export CLAWBENCH_RUN_CACHE_DIR=$PWD/.clawbench/run_cache
+
+# Real benchmark run + immediate per-run dynamics bundle
+clawbench run \
+  --model ollama/gpt-oss:20b \
+  --task t1-fs-quick-note \
+  --runs 1 \
+  --dynamics \
+  -o results/ollama_smoke.json
+
+# Optional second local model
+ollama pull qwen3.5:27b
+
+# Offline posterior analysis reads CLAWBENCH_RUN_CACHE_DIR
+python3 scripts/run_posterior_dynamics_pipeline.py \
+  --archive-dir .clawbench/run_cache \
+  --reports-dir results/posterior_reports
+
+clawbench diagnose profiles/local_ollama_gpt_oss.yaml
 ```
 
 ---
@@ -285,26 +488,43 @@ clawbench/
 │   ├── environment.py              # 5 deterministic verifier types
 │   ├── judge.py                    # LLM judge (gated, never rescues failures)
 │   ├── harness.py                  # Benchmark orchestration + parallel lanes
-│   ├── worker.py                   # Background eval worker
-│   ├── client.py                   # OpenClaw Gateway WebSocket client
 │   ├── schemas.py                  # 13-mode failure taxonomy + result schemas
 │   ├── stats.py                    # Bootstrap CI + Taguchi S/N
 │   ├── profile.py                  # v0.5 plugin fingerprinting
-│   ├── prediction.py               # k-NN cold-start prediction
-│   ├── factor_analysis.py          # fANOVA factor importance
 │   ├── diagnostic.py               # Configuration Diagnostic report
-│   ├── utilization.py              # Plugin utilization audit
-│   ├── recommendations.py          # Evidence-backed config changes
+│   ├── factor_analysis.py          # fANOVA factor importance
+│   ├── dynamics.py                 # Trajectory metrics + sensitivity analysis
+│   ├── dynamics_archive.py         # Cached-run loading + offline report assembly
+│   ├── dynamics_plots.py           # Offline dynamics visualizations
 │   └── cli.py                      # CLI entry points
 │
-├── tasks/                          # 40 tasks across 5 tiers
-│   ├── tier1/ ... tier5/           # Task YAMLs with verification specs
-│   └── assets/                     # Per-task fixture directories
+├── tasks-public/                   # Core v1 PUBLIC release (19 tasks)
+│   ├── MANIFEST.yaml               # Task list + reference ranking + metadata
+│   ├── README.md                   # Rationale, build + run instructions
+│   ├── tier1/ ... tier5/           # 19 task YAMLs with verification specs
+│   └── assets/                     # 19 asset packs (verifiers + fixtures)
+│
+├── tasks/                          # PRIVATE 40-task dev pool (gitignored)
+│
+├── scripts/                        # Reproducibility + analysis pipeline
+│   ├── container_sweep_single.sh   # Per-container OPENCLAW_STATE_DIR isolation
+│   ├── audit_runs.py               # Aggregate coverage + fair-comparison audit
+│   ├── audit_per_run.py            # Per-run cross-model audit
+│   ├── rejudge_all.py              # Direct-API rejudge for broken gateway judges
+│   ├── generate_fair_report.py     # Fair N-model comparison report
+│   ├── run_posterior_dynamics_pipeline.py # One-shot posterior analysis driver
+│   ├── compute_constraint_index.py # C(q) per task
+│   ├── classify_regimes.py         # Per-run dynamical regime classifier
+│   ├── variance_decomp.py          # Seed-noise vs capability-signal decomposition
+│   ├── survival_analysis.py        # Per-turn failure survival curves
+│   ├── snr_weighted_ranking.py     # SNR × |C(q)|-weighted ranking
+│   └── generate_dynamical_report.py # Combined dynamical-systems report
 │
 ├── profiles/                       # v0.5 plugin profile YAMLs
-├── tests/                          # 107 tests
-├── CLAWBENCH_V0_4_SPEC.md         # Full specification
-└── PARTNER_TRACE_SPEC.md          # Trace interchange format
+├── tests/                          # Test suite
+├── Dockerfile                      # Layered on a pinned ghcr.io/openclaw/openclaw image
+├── CLAWBENCH_V0_4_SPEC.md          # Full specification
+└── PARTNER_TRACE_SPEC.md           # Trace interchange format
 ```
 
 ---
@@ -313,20 +533,25 @@ clawbench/
 
 |  | ClawBench | SWE-bench | HumanEval | LLM-judge leaderboards |
 |---|---|---|---|---|
-| **Scores process, not just output** | Trace-based trajectory + behavior scoring | No | No | No |
-| **Reliability as first-class metric** | pass^k, Taguchi S/N, worst-of-n, bootstrap CI | Single pass rate | pass@k | Best-of-n |
-| **Failure taxonomy** | 13 deterministic modes per run | Binary pass/fail | Binary | None |
+| **Scores process, not just output** | ✓ Trace-based trajectory + behavior | No | No | No |
+| **Reliability as first-class metric** | ✓ pass^k, Taguchi S/N, bootstrap CI | Single pass rate | pass@k | Best-of-n |
+| **Variance decomposition reported** | ✓ seed-noise vs capability-signal ratio | No | No | No |
+| **Per-run dynamical regime** | ✓ trapped / cycle / diffusive | No | No | No |
+| **SNR-weighted alternative ranking** | ✓ principled task weighting | No | No | No |
+| **Failure taxonomy** | ✓ 13 deterministic modes | Binary pass/fail | Binary | None |
 | **LLM judge role** | Capped 10%, gated on deterministic floor | Not used | Not used | Primary scorer |
-| **Configuration diagnostics** | Fingerprint, predict, explain, recommend | No | No | No |
+| **Configuration diagnostics** | ✓ Fingerprint, predict, explain, recommend | No | No | No |
+| **State-isolation per run** | ✓ per-container OPENCLAW_STATE_DIR | No | No | No |
 | **Multiple runs per task** | 3 runs mandatory, statistical tests | Usually 1 | Varies | Usually 1 |
-| **Real tool composition** | Browser + code + memory + cron + delegation | Code only | Code only | Varies |
+| **Provider-routing caveats** | ✓ documented (OpenRouter drift) | Not flagged | Not flagged | Not flagged |
+| **Real tool composition** | ✓ Browser + code + memory + cron + delegation | Code only | Code only | Varies |
 
 ---
 
 ## Testing
 
 ```bash
-python -m pytest -q     # 107 tests
+python -m pytest -q
 ```
 
 Key test invariants:
@@ -334,6 +559,22 @@ Key test invariants:
 - Parallel lanes are isolated (`test_parallel_harness.py`)
 - Bootstrap CIs are statistically valid (`test_e2e_significance.py`)
 - fANOVA factor importance converges (`test_v05_framework.py`)
+
+---
+
+## Version log
+
+| Version | Date | Summary |
+|:---:|---|---|
+| **Core v1** | 2026-04-20 | 19-task signal-curated public release; dynamical-systems diagnostics (C(q), regimes, survival, SNR-weighted); per-container state isolation; rejudge pipeline |
+| v0.5 | earlier | Configuration Diagnostic (fingerprint, predict, fANOVA); plugin-native ablation |
+| v0.4 | earlier | 4-axis scoring with gated judge; 13-mode failure taxonomy; Partner Trace Spec |
+
+Planned for Core v2:
+- **Tier 6 long-horizon tasks** (100+ turn runs) — unlock real Lyapunov / attractor measurement
+- **Paraphrased prompt pairs** — enable perturbation-sensitivity ranking
+- **Creative-synthesis tasks** — currently absent from Core v1
+- **Human-performance baseline** on 10 tasks — calibrate difficulty
 
 ---
 
@@ -345,10 +586,10 @@ MIT. See `LICENSE`.
 
 ```bibtex
 @software{clawbench,
-  title  = {ClawBench: Trace-Scored Agent Benchmark with Configuration Diagnostics},
+  title  = {ClawBench: Trace-Scored Agent Benchmark with Dynamical-Systems Diagnostics},
   author = {ScoootScooob},
   year   = {2026},
-  url    = {https://github.com/scoootscooob/clawbench}
+  url    = {https://github.com/openclaw/clawbench}
 }
 ```
 
@@ -356,8 +597,8 @@ MIT. See `LICENSE`.
 
 <div align="center">
 
-**ClawBench** — because users don't experience a benchmark score. They experience the agent.
+**ClawBench** — Rigorous. Reproducible. Dynamical.
 
-[Dataset](https://huggingface.co/datasets/ScoootScooob/clawbench-results) · [Space](https://huggingface.co/spaces/ScoootScooob/clawbench) · [Spec](CLAWBENCH_V0_4_SPEC.md)
+[Dataset](https://huggingface.co/datasets/openclaw/clawbench-results) · [Space](https://huggingface.co/spaces/openclaw/clawbench) · [Core v1](tasks-public/) · [Spec](CLAWBENCH_V0_4_SPEC.md)
 
 </div>

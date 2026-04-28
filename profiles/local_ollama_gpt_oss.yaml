@@ -1,0 +1,30 @@
+profile:
+  name: local-ollama-gpt-oss
+  base_model: ollama/gpt-oss:20b
+  notes: |
+    Reference profile metadata for local Ollama experiments. Change
+    base_model and tools_allow to match your setup, then use
+    `clawbench diagnose` to inspect the fingerprint and attach your
+    benchmark results separately in a PR.
+
+    Contributor-side baseline (gpt-oss:20b, RTX 4090, Docker sandbox,
+    network=none):
+      Tier-1+2: 0.467 (CI 0.375-0.545), T=0.666, B=0.850, C=0.202
+  plugins:
+    enabled:
+      - ollama
+      - id: memory-lancedb
+        config:
+          dimensions: 1536
+      - browser-playwright
+    slots:
+      memory: memory-lancedb
+      contextEngine: builtin
+    tools_allow:
+      - bash
+      - file_read
+      - file_edit
+      - browser_navigate
+      - browser_click
+      - memory_read
+      - memory_write

@@ -29,7 +29,7 @@ when data volume permits.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from itertools import combinations
 
 from clawbench.prediction import HistoricalDatabase
@@ -199,7 +199,6 @@ def _analyze_lite(
     main_effects.sort(key=lambda m: m.importance, reverse=True)
 
     # Pairwise interactions (only the top-k by absolute residual)
-    me_lookup = {m.feature: m for m in main_effects}
     candidates = [m.feature for m in main_effects[:20]]  # cap to prevent explosion
     interactions: list[InteractionImportance] = []
     for fa, fb in combinations(candidates, 2):
@@ -272,7 +271,6 @@ def _analyze_random_forest(
         for j, fname in enumerate(all_features):
             X[i, j] = 1.0 if feats.get(fname, False) else 0.0
 
-    grand_mean = float(y.mean())
     total_variance = float(y.var(ddof=1)) if n_samples > 1 else 0.0
     if total_variance < 1e-9:
         return FactorAnalysisReport(
