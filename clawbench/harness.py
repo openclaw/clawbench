@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -42,6 +43,7 @@ console = Console()
 
 KNOWN_ADAPTERS = ("openclaw", "hermes", "codex", "claude-code")
 EXECUTABLE_ADAPTERS = {"openclaw"}
+RUN_CACHE_SCHEMA_VERSION = 2
 
 
 class _NullCtx:
@@ -280,8 +282,7 @@ class BenchmarkHarness:
         cache_dir_env = os.environ.get("CLAWBENCH_RUN_CACHE_DIR", "/data/run_cache")
         cache_path: Path | None = None
         if cache_dir_env:
-            safe_model = self.model.replace("/", "_").replace(":", "_")
-            cache_path = Path(cache_dir_env) / safe_model / task.id / f"run{run_index}.json"
+            cache_path = self._run_cache_path(Path(cache_dir_env), task, run_index)
             if cache_path.exists():
                 try:
                     cached = TaskRunResult.model_validate_json(cache_path.read_text(encoding="utf-8"))
@@ -538,6 +539,27 @@ class BenchmarkHarness:
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(item, target)
+
+    def _run_cache_path(self, cache_root: Path, task: TaskDefinition, run_index: int) -> Path:
+        identity = {
+            "schema": RUN_CACHE_SCHEMA_VERSION,
+            "model": self.model,
+            "adapter": self.adapter,
+            "prompt_variant": self.prompt_variant,
+            "judge_model": self.judge_model,
+            "benchmark_version": __version__,
+            "task_fingerprint": _task_definition_fingerprint(task),
+        }
+        scope = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        return (
+            cache_root
+            / _safe_cache_component(self.model)
+            / f"v{RUN_CACHE_SCHEMA_VERSION}-{scope}"
+            / _safe_cache_component(task.id)
+            / f"run{run_index}.json"
+        )
 
     async def _assert_browser_support(self, client: GatewayClient, session_key: str) -> None:
         inventory = await client.get_effective_tools(session_key)
@@ -931,6 +953,18 @@ def _count_values(values) -> dict[str, int]:
     for value in values:
         counts[str(value)] = counts.get(str(value), 0) + 1
     return counts
+
+
+def _safe_cache_component(value: str) -> str:
+    cleaned = "".join(char if char.isalnum() or char in "._-" else "_" for char in value.strip())
+    return cleaned.strip("._-") or "unknown"
+
+
+def _task_definition_fingerprint(task: TaskDefinition) -> str:
+    payload = task.model_dump(mode="json")
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
 
 
 def _now_ms() -> int:

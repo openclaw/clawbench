@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from clawbench.paths import resolve_workspace_path
 from clawbench.render import render_template, render_value
 from clawbench.schemas import BackgroundService
 
@@ -80,7 +81,11 @@ async def start_background_services(
         service_env.setdefault("PYTHONUNBUFFERED", "1")
 
         command = render_template(spec.command, values)
-        cwd = workspace / render_template(spec.cwd, values)
+        cwd = resolve_workspace_path(
+            workspace,
+            render_template(spec.cwd, values),
+            field=f"background service cwd for {spec.name}",
+        )
         log_dir = workspace / ".clawbench-services"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"{spec.name}.log"
@@ -120,11 +125,13 @@ async def _wait_for_service_ready(
 ) -> None:
     spec = service.spec
     deadline = time.monotonic() + spec.startup_timeout_seconds
-    ready_file = (
-        workspace / render_template(spec.ready_file, runtime_values)
-        if spec.ready_file
-        else None
-    )
+    ready_file = None
+    if spec.ready_file:
+        ready_file = resolve_workspace_path(
+            workspace,
+            render_template(spec.ready_file, runtime_values),
+            field=f"background service ready_file for {spec.name}",
+        )
     ready_url = None
     if service.base_url and spec.ready_path:
         ready_url = f"{service.base_url.rstrip('/')}/{spec.ready_path.lstrip('/')}"

@@ -71,6 +71,27 @@ def test_build_judge_prompt_includes_artifacts_completion_feedback_and_transcrip
     assert "tool families: read x1" in prompt
 
 
+def test_build_judge_prompt_rejects_artifact_paths_outside_workspace(tmp_path: Path):
+    outside = tmp_path.parent / "outside-judge.txt"
+    outside.write_text("do not leak", encoding="utf-8")
+    judge = JudgeExpectations(
+        rubric="Check that the answer is grounded and auditable.",
+        artifact_paths=["../outside-judge.txt"],
+    )
+    task = _make_task(judge)
+
+    prompt = build_judge_prompt(
+        task=task,
+        judge=judge,
+        transcript=Transcript(),
+        workspace=tmp_path,
+        completion_result=CompletionResult(score=1.0),
+    )
+
+    assert "invalid path" in prompt
+    assert "do not leak" not in prompt
+
+
 def test_parse_judge_response_accepts_wrapped_json_and_computes_pass():
     result = parse_judge_response(
         'Score summary:\n{"score": 0.82, "confidence": 0.66, "reason": "Strong evidence.", "rubric_hits": ["grounded"], "rubric_misses": []}',

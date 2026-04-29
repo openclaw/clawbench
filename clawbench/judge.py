@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from clawbench.client import GatewayClient
+from clawbench.paths import resolve_workspace_path
 from clawbench.session_labels import unique_session_label
 from clawbench.schemas import (
     CompletionResult,
@@ -51,7 +52,6 @@ async def judge_task_run(
         )
         await client.subscribe(session_key)
         judge_transcript = await client.send_and_wait(session_key, prompt)
-        # Temporary debug: log first 800 chars of raw judge response when parsing fails
         raw_text = judge_transcript.assistant_text
         parsed = parse_judge_response(
             raw_text,
@@ -59,9 +59,10 @@ async def judge_task_run(
         )
         if parsed.error:
             logger.warning(
-                "Judge parse failed for %s. Raw response (first 800 chars):\n%s",
+                "Judge parse failed for %s: %s (response length=%d)",
                 task.id,
-                raw_text[:800] if raw_text else "(empty)",
+                parsed.error,
+                len(raw_text or ""),
             )
         parsed.enabled = True
         parsed.model = judge_model
@@ -185,14 +186,22 @@ def _render_artifacts(*, artifact_paths: list[str], workspace: Path, max_chars: 
     remaining = max_chars
     blocks: list[str] = []
     for rel_path in artifact_paths:
-        target = workspace / rel_path
-        if not target.exists():
-            block = f"=== {rel_path} ===\n(missing)"
-        elif target.is_dir():
-            block = f"=== {rel_path} ===\n(directory)"
+        try:
+            target = resolve_workspace_path(
+                workspace,
+                rel_path,
+                field=f"judge artifact {rel_path}",
+            )
+        except ValueError as exc:
+            block = f"=== {rel_path} ===\n(invalid path: {exc})"
         else:
-            content = target.read_text(encoding="utf-8", errors="replace")
-            block = f"=== {rel_path} ===\n{_truncate_text(content, max(0, remaining - len(rel_path) - 20))}"
+            if not target.exists():
+                block = f"=== {rel_path} ===\n(missing)"
+            elif target.is_dir():
+                block = f"=== {rel_path} ===\n(directory)"
+            else:
+                content = target.read_text(encoding="utf-8", errors="replace")
+                block = f"=== {rel_path} ===\n{_truncate_text(content, max(0, remaining - len(rel_path) - 20))}"
 
         if remaining <= 0:
             break

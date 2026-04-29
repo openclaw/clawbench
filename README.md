@@ -504,6 +504,8 @@ clawbench/
 │   ├── tier1/ ... tier5/           # 19 task YAMLs with verification specs
 │   └── assets/                     # 19 asset packs (verifiers + fixtures)
 │
+├── tasks-domain/                   # Planned domain coverage scaffold
+│
 ├── tasks/                          # PRIVATE 40-task dev pool (gitignored)
 │
 ├── scripts/                        # Reproducibility + analysis pipeline
