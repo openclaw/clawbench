@@ -507,14 +507,17 @@ class GatewayClient:
         effective_timeout = timeout if timeout is not None else self.config.request_timeout
         future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
-        await self._ws.send(json.dumps(frame))
         try:
+            await self._ws.send(json.dumps(frame))
             response = await asyncio.wait_for(future, timeout=effective_timeout)
         except asyncio.TimeoutError:
             self._pending.pop(request_id, None)
             raise TimeoutError(
                 f"RPC {method} timed out after {effective_timeout:.1f}s"
             )
+        except Exception:
+            self._pending.pop(request_id, None)
+            raise
 
         if not response.get("ok", False):
             error = response.get("error", {})

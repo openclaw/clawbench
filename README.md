@@ -71,9 +71,9 @@ Every agent run produces a full execution trace: every tool call, every file rea
 | **Completion** | 40% | Did the work actually get done? | Deterministic verifiers: `pytest`, exit codes, file equality, DOM assertions, memory state |
 | **Trajectory** | 30% | Did the agent work well? | Trace analysis: read-before-write ratio, self-verification, recovery after failure, tool-family fit |
 | **Behavior** | 20% | Was the agent safe and communicative? | Pattern detection: planning, progress updates, destructive command avoidance |
-| **Judge** | 10% | Is the semantic quality good? | LLM evaluation (gated — only contributes when deterministic completion is already near-perfect) |
+| **Judge** | Advisory | Is the semantic quality good? | LLM evaluation sidecar; opt-in experimental judge-weighted scoring is gated |
 
-**The key invariant**: the LLM judge can never rescue a failed deterministic check. If `pytest` fails, the judge score is zeroed. This is enforced in code and tested. You can't game ClawBench by producing output that *looks* correct to an LLM but doesn't actually work.
+**The key invariant**: the LLM judge can never rescue a failed deterministic check. Official scoring keeps judge results as a sidecar signal. Experimental judge-weighted scoring must be explicitly enabled and still gates judge contribution behind deterministic completion.
 
 ### 2. We measure reliability AND quantify noise
 
@@ -503,6 +503,8 @@ clawbench/
 │   ├── README.md                   # Rationale, build + run instructions
 │   ├── tier1/ ... tier5/           # 19 task YAMLs with verification specs
 │   └── assets/                     # 19 asset packs (verifiers + fixtures)
+│
+├── tasks-domain/                   # Planned domain coverage scaffold
 │
 ├── tasks/                          # PRIVATE 40-task dev pool (gitignored)
 │

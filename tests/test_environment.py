@@ -2,8 +2,19 @@ from pathlib import Path
 
 import pytest
 
-from clawbench.environment import verify_completion
-from clawbench.schemas import CompletionSpec, MemoryState, ToolCall, Transcript, TranscriptMessage
+from clawbench.environment import run_execution_check, verify_completion
+from clawbench.schemas import (
+    CompletionSpec,
+    CronState,
+    ExecutionCheck,
+    FileState,
+    GatewayAssertion,
+    MemoryState,
+    SessionState,
+    ToolCall,
+    Transcript,
+    TranscriptMessage,
+)
 
 
 class MemoryFallbackClient:
@@ -20,6 +31,30 @@ class MemoryFallbackClient:
                 }
             }
         return {"file": {"content": ""}}
+
+
+class CompletionClient:
+    async def _rpc(self, method: str, params=None):  # noqa: ANN001
+        if method == "sessions.resolve":
+            return {"payload": {"model": "anthropic/claude-sonnet-4-6"}}
+        if method == "cron.list":
+            return {"payload": {"jobs": [{"description": "nightly cleanup"}]}}
+        if method == "tools.inventory":
+            return {
+                "payload": {
+                    "groups": [
+                        {
+                            "tools": [
+                                {
+                                    "id": "browser",
+                                    "status": "available",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        raise AssertionError(f"Unexpected RPC: {method} {params}")
 
 
 @pytest.mark.asyncio
@@ -43,6 +78,123 @@ async def test_memory_completion_falls_back_to_agent_memory_files(tmp_path: Path
     )
 
     assert result.score == 1.0
+
+
+@pytest.mark.asyncio
+async def test_verify_completion_scores_mixed_successful_assertions(tmp_path: Path):
+    report = tmp_path / "report.txt"
+    report.write_text("status: green\nowner: benchmark\n", encoding="utf-8")
+    completion = CompletionSpec(
+        files=[
+            FileState(
+                path="report.txt",
+                content_contains=["green"],
+                content_not_contains=["red"],
+                content_matches=r"owner:\s+benchmark",
+                min_size_bytes=10,
+            )
+        ],
+        session=SessionState(model_should_be="claude-sonnet"),
+        cron=[CronState(description_contains="cleanup")],
+        gateway_assertions=[
+            GatewayAssertion(
+                method="tools.inventory",
+                assert_path="$.groups[0].tools[0].id",
+                assert_equals="browser",
+            ),
+            GatewayAssertion(
+                method="tools.inventory",
+                assert_path="$.groups[0].tools[0].status",
+                assert_contains="avail",
+            ),
+        ],
+    )
+
+    result = await verify_completion(
+        completion,
+        workspace=tmp_path,
+        client=CompletionClient(),  # type: ignore[arg-type]
+        session_key="session-test",
+        runtime_values={},
+    )
+
+    assert result.total_assertions == 5
+    assert result.passed_assertions == 5
+    assert result.failed_assertions == []
+    assert result.score == 1.0
+
+
+@pytest.mark.asyncio
+async def test_file_completion_rejects_paths_outside_workspace(tmp_path: Path):
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    completion = CompletionSpec(files=[FileState(path="../outside.txt")])
+
+    result = await verify_completion(
+        completion,
+        workspace=tmp_path,
+        client=MemoryFallbackClient(),  # type: ignore[arg-type]
+        session_key="session-test",
+        runtime_values={},
+    )
+
+    assert result.score == 0.0
+    assert "escapes workspace" in result.failed_assertions[0]
+
+
+@pytest.mark.asyncio
+async def test_execution_check_supports_cwd_env_and_expected_json_file(tmp_path: Path):
+    expected = tmp_path / "expected.json"
+    expected.write_text('{"status": "ok"}', encoding="utf-8")
+    workdir = tmp_path / "subdir"
+    workdir.mkdir()
+
+    result = await run_execution_check(
+        ExecutionCheck(
+            name="json-check",
+            command='python -c "import json, os; print(json.dumps({\'status\': os.environ[\'CHECK_STATUS\']}))"',
+            cwd="subdir",
+            env={"CHECK_STATUS": "ok"},
+            expected_json_file="expected.json",
+        ),
+        workspace=tmp_path,
+        runtime_values={},
+    )
+
+    assert result.passed is True
+    assert result.reason == "OK"
+
+
+@pytest.mark.asyncio
+async def test_execution_check_rejects_cwd_outside_workspace(tmp_path: Path):
+    result = await run_execution_check(
+        ExecutionCheck(
+            name="unsafe-cwd",
+            command="true",
+            cwd="../outside",
+        ),
+        workspace=tmp_path,
+        runtime_values={},
+    )
+
+    assert result.passed is False
+    assert "escapes workspace" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_execution_check_rejects_expected_file_outside_workspace(tmp_path: Path):
+    result = await run_execution_check(
+        ExecutionCheck(
+            name="unsafe-expected",
+            command="printf secret",
+            expected_stdout_file="../outside.txt",
+        ),
+        workspace=tmp_path,
+        runtime_values={},
+    )
+
+    assert result.passed is False
+    assert "escapes workspace" in result.reason
 
 
 @pytest.mark.asyncio

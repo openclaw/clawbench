@@ -225,6 +225,7 @@ class EvalWorker:
                 job.job_id,
                 progress.mark_status("Uploading results", clear_active=True),
             )
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
             result_path = RESULTS_DIR / f"{result.submission_id}.json"
             result_path.write_text(json.dumps(result.model_dump(), indent=2), encoding="utf-8")
 
@@ -293,6 +294,7 @@ class EvalWorker:
             model=job.request.model,
             provider=job.request.provider,
             judge_model=job.request.judge_model or os.environ.get("CLAWBENCH_JUDGE_MODEL", ""),
+            judge_affects_score=job.request.judge_affects_score,
             runs_per_task=job.request.runs_per_task,
             tier=job.request.tier,
             task_ids=[task.id for task in tasks],
@@ -365,6 +367,7 @@ class EvalWorker:
                 model=job.request.model,
                 provider=job.request.provider,
                 judge_model=job.request.judge_model or os.environ.get("CLAWBENCH_JUDGE_MODEL", ""),
+                judge_affects_score=job.request.judge_affects_score,
                 runs_per_task=job.request.runs_per_task,
                 tier=job.request.tier,
                 scenario=job.request.scenario,
@@ -421,6 +424,7 @@ class EvalWorker:
             model=job.request.model,
             provider=job.request.provider,
             judge_model=job.request.judge_model or os.environ.get("CLAWBENCH_JUDGE_MODEL", ""),
+            judge_affects_score=job.request.judge_affects_score,
             runs_per_task=job.request.runs_per_task,
             task_ids=[task.id for task in lane.tasks],
             scenario=job.request.scenario,

@@ -37,7 +37,10 @@ jobs:
           python -m pip install -e .[dev]
 
       - name: Run static lint
-        run: python -m ruff check clawbench app.py scripts tests --select F,E9
+        run: python -m ruff check clawbench app.py scripts tests
+
+      - name: Run runtime contract smoke tests
+        run: python -m pytest -q tests/test_runtime_contracts.py
 
       - name: Run test suite
         run: python -m pytest -q
@@ -54,6 +57,7 @@ jobs:
               names = set(archive.namelist())
           required = [
               "tasks-public/MANIFEST.yaml",
+              "tasks-domain/MANIFEST.yaml",
               "profiles/example_research_stack.yaml",
               "baselines/BASELINE_SOURCES.md",
           ]

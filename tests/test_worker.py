@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from clawbench.queue import JobQueue
+from clawbench.queue import Job, JobQueue, JobStatus, SubmissionRequest
 from clawbench.worker import GATEWAY_PORT, GATEWAY_PORT_SPACING, EvalWorker, JobProgressTracker, ParallelLane
 
 
@@ -26,6 +26,52 @@ class DummyTask:
 
     def normalized_phases(self):
         return [object()] * self._phases
+
+
+class FakeQueue:
+    def __init__(self) -> None:
+        self.evaluating: list[str] = []
+        self.finished: list[tuple[str, str]] = []
+        self.failed: list[tuple[str, str]] = []
+        self.progress: list[tuple[str, dict[str, object]]] = []
+
+    async def mark_evaluating(self, job_id: str) -> None:
+        self.evaluating.append(job_id)
+
+    async def mark_finished(self, job_id: str, result_id: str) -> None:
+        self.finished.append((job_id, result_id))
+
+    async def mark_failed(self, job_id: str, error: str) -> None:
+        self.failed.append((job_id, error))
+
+    async def update_progress(self, job_id: str, **kwargs) -> None:
+        self.progress.append((job_id, kwargs))
+
+
+class FakeBenchmarkResult:
+    submission_id = "submission-1"
+    overall_score = 0.82
+    overall_pass_hat_k = 1.0
+
+    def model_dump(self):
+        return {
+            "submission_id": self.submission_id,
+            "overall_score": self.overall_score,
+            "overall_pass_hat_k": self.overall_pass_hat_k,
+        }
+
+
+def make_job(*, status: JobStatus = JobStatus.PENDING, lanes: int = 1) -> Job:
+    return Job(
+        job_id="job-1",
+        status=status,
+        request=SubmissionRequest(
+            model="anthropic/claude-sonnet-4-6",
+            provider="anthropic",
+            runs_per_task=1,
+            max_parallel_lanes=lanes,
+        ),
+    )
 
 
 def test_configure_browser_runtime_sets_benchmark_safe_openclaw_config(monkeypatch):
@@ -169,6 +215,133 @@ def test_materialize_lane_runtime_spaces_ports_and_copies_auth(tmp_path: Path, m
     assert lane1.port == GATEWAY_PORT + GATEWAY_PORT_SPACING
     assert lane1.state_dir is not None
     assert (lane1.state_dir / "agents" / "main" / "agent" / "auth-profiles.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_process_job_finishes_when_optional_result_upload_fails(tmp_path: Path, monkeypatch):
+    queue = FakeQueue()
+    worker = EvalWorker(queue)  # type: ignore[arg-type]
+    cleanup_calls: list[str] = []
+
+    async def fake_run_serial_benchmark(job, tasks, progress):  # noqa: ANN001
+        progress.mark_serial(tasks[0].id, 0, stage="running")
+        return FakeBenchmarkResult()
+
+    async def fake_upload_result(result):  # noqa: ANN001
+        raise RuntimeError("hub upload unavailable")
+
+    monkeypatch.setattr("clawbench.worker.RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(worker, "_load_job_tasks", lambda job: [DummyTask("t1", "tier1", "coding")])
+    monkeypatch.setattr(worker, "_run_serial_benchmark", fake_run_serial_benchmark)
+    monkeypatch.setattr(worker, "_stop_gateway", lambda: cleanup_calls.append("serial"))
+    monkeypatch.setattr(worker, "_stop_parallel_gateways", lambda: cleanup_calls.append("parallel"))
+    monkeypatch.setattr("clawbench.upload.upload_result", fake_upload_result)
+
+    await worker._process_job(make_job())
+
+    assert queue.evaluating == ["job-1"]
+    assert queue.finished == [("job-1", "submission-1")]
+    assert queue.failed == []
+    assert (tmp_path / "submission-1.json").exists()
+    assert cleanup_calls[-2:] == ["serial", "parallel"]
+    assert worker._active_model == ""
+    assert worker._serial_last_task_id is None
+
+
+@pytest.mark.asyncio
+async def test_process_job_marks_failure_and_cleans_up_after_benchmark_error(monkeypatch):
+    queue = FakeQueue()
+    worker = EvalWorker(queue)  # type: ignore[arg-type]
+    cleanup_calls: list[str] = []
+
+    async def fail_run_serial_benchmark(job, tasks, progress):  # noqa: ANN001
+        raise RuntimeError("gateway died")
+
+    monkeypatch.setattr(worker, "_load_job_tasks", lambda job: [DummyTask("t1", "tier1", "coding")])
+    monkeypatch.setattr(worker, "_run_serial_benchmark", fail_run_serial_benchmark)
+    monkeypatch.setattr(worker, "_stop_gateway", lambda: cleanup_calls.append("serial"))
+    monkeypatch.setattr(worker, "_stop_parallel_gateways", lambda: cleanup_calls.append("parallel"))
+
+    await worker._process_job(make_job())
+
+    assert queue.evaluating == ["job-1"]
+    assert queue.finished == []
+    assert queue.failed == [("job-1", "gateway died")]
+    assert cleanup_calls[-2:] == ["serial", "parallel"]
+    assert worker._active_model == ""
+    assert worker._serial_last_task_id is None
+
+
+@pytest.mark.asyncio
+async def test_process_job_does_not_reclaim_already_claimed_evaluating_job(tmp_path: Path, monkeypatch):
+    queue = FakeQueue()
+    worker = EvalWorker(queue)  # type: ignore[arg-type]
+
+    async def fake_run_serial_benchmark(job, tasks, progress):  # noqa: ANN001
+        return FakeBenchmarkResult()
+
+    async def fake_upload_result(result):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr("clawbench.worker.RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(worker, "_load_job_tasks", lambda job: [DummyTask("t1", "tier1", "coding")])
+    monkeypatch.setattr(worker, "_run_serial_benchmark", fake_run_serial_benchmark)
+    monkeypatch.setattr(worker, "_stop_gateway", lambda: None)
+    monkeypatch.setattr(worker, "_stop_parallel_gateways", lambda: None)
+    monkeypatch.setattr("clawbench.upload.upload_result", fake_upload_result)
+
+    await worker._process_job(make_job(status=JobStatus.EVALUATING))
+
+    assert queue.evaluating == []
+    assert queue.finished == [("job-1", "submission-1")]
+
+
+@pytest.mark.asyncio
+async def test_run_serial_benchmark_forwards_judge_score_gate(monkeypatch):
+    queue = JobQueue()
+    worker = EvalWorker(queue)
+    captured: dict[str, object] = {}
+
+    async def fake_ensure_gateway() -> None:
+        return None
+
+    async def fake_preflight_browser_support_for_tasks(*args, **kwargs) -> None:
+        return None
+
+    class FakeHarness:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def run(self):
+            return SimpleNamespace(submission_id="submission-1")
+
+    monkeypatch.setattr(worker, "_stop_gateway", lambda: None)
+    monkeypatch.setattr(worker, "_ensure_gateway", fake_ensure_gateway)
+    monkeypatch.setattr(worker, "_preflight_browser_support_for_tasks", fake_preflight_browser_support_for_tasks)
+    monkeypatch.setattr("clawbench.worker.BenchmarkHarness", FakeHarness)
+
+    job = SimpleNamespace(
+        request=SimpleNamespace(
+            model="anthropic/claude-sonnet-4-6",
+            provider="anthropic",
+            judge_model="judge-model",
+            judge_affects_score=True,
+            runs_per_task=1,
+            tier="tier1",
+            scenario=None,
+            prompt_variant="clear",
+        )
+    )
+    progress = JobProgressTracker(total_tasks=1, runs_per_task=1, requested_parallel_lanes=1)
+
+    await worker._run_serial_benchmark(
+        job,
+        [DummyTask("t1-bugfix-discount", "tier1", "coding")],
+        progress,
+    )
+
+    assert captured["judge_model"] == "judge-model"
+    assert captured["judge_affects_score"] is True
 
 
 @pytest.mark.asyncio

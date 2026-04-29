@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from websockets.datastructures import Headers
@@ -192,3 +193,36 @@ async def test_send_and_wait_collects_messages_that_arrive_after_final_state():
     transcript = await client.send_and_wait(session_key, "hello", timeout=1.0)
 
     assert [message.text for message in transcript.assistant_messages] == ["Late but valid."]
+
+
+@pytest.mark.asyncio
+async def test_rpc_send_failure_cleans_pending_request():
+    class FailingWebSocket:
+        async def send(self, payload: str) -> None:  # noqa: ARG002
+            raise ConnectionError("socket closed")
+
+    client = GatewayClient(GatewayConfig(request_timeout=0.01))
+    client._ws = FailingWebSocket()  # type: ignore[assignment]
+
+    with pytest.raises(ConnectionError, match="socket closed"):
+        await client._rpc("sessions.create", {"model": "test-model"})
+
+    assert client._pending == {}
+
+
+@pytest.mark.asyncio
+async def test_rpc_timeout_cleans_pending_request():
+    sent_frames: list[dict[str, object]] = []
+
+    class SilentWebSocket:
+        async def send(self, payload: str) -> None:
+            sent_frames.append(json.loads(payload))
+
+    client = GatewayClient(GatewayConfig(request_timeout=0.01))
+    client._ws = SilentWebSocket()  # type: ignore[assignment]
+
+    with pytest.raises(TimeoutError, match="RPC sessions.create timed out"):
+        await client._rpc("sessions.create", {"model": "test-model"})
+
+    assert sent_frames[0]["method"] == "sessions.create"
+    assert client._pending == {}
