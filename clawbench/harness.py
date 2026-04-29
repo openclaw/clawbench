@@ -547,6 +547,7 @@ class BenchmarkHarness:
             "adapter": self.adapter,
             "prompt_variant": self.prompt_variant,
             "judge_model": self.judge_model,
+            "judge_affects_score": self.judge_affects_score,
             "benchmark_version": __version__,
             "task_fingerprint": _task_definition_fingerprint(task),
         }
