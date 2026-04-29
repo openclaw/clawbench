@@ -35,3 +35,21 @@ async def test_background_service_waits_for_ready_file(tmp_path: Path):
     finally:
         await stop_background_services(services)
 
+
+@pytest.mark.asyncio
+async def test_background_service_rejects_cwd_outside_workspace(tmp_path: Path):
+    runtime_values = build_runtime_values(workspace=tmp_path, repo_root=Path.cwd())
+    service = BackgroundService(
+        name="bad_service",
+        command="true",
+        cwd="..",
+        ready_path=None,
+    )
+
+    with pytest.raises(ValueError, match="escapes workspace"):
+        await start_background_services(
+            [service],
+            workspace=tmp_path,
+            repo_root=Path.cwd(),
+            runtime_values=runtime_values,
+        )

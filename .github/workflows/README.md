@@ -9,10 +9,11 @@ Runs the repository test suite automatically on:
 - manual dispatch from the Actions tab
 
 It uses Python 3.11 and 3.12, installs the package with
-`pip install -e .`, runs `python -m pytest -q`, then builds a wheel and
-checks that runtime data such as `tasks-public/`, `profiles/`, and
-`baselines/` are included. Runs under the `openclaw` organization use the
-Blacksmith Ubuntu runner; forks fall back to GitHub-hosted `ubuntu-latest`.
+`pip install -e .[dev]`, runs full Ruff lint plus `python -m pytest -q`,
+then builds a wheel and checks that runtime data such as `tasks-public/`,
+`tasks-domain/`, `profiles/`, and `baselines/` are included. Runs under the
+`openclaw` organization use the Blacksmith Ubuntu runner; forks fall back to
+GitHub-hosted `ubuntu-latest`.
 
 ## `ci-check-testbox.yml` — Blacksmith Testbox warmup
 

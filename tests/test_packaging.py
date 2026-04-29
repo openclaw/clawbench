@@ -7,5 +7,6 @@ def test_wheel_includes_runtime_data_directories():
     force_include = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
 
     assert force_include["tasks-public"] == "tasks-public"
+    assert force_include["tasks-domain"] == "tasks-domain"
     assert force_include["profiles"] == "profiles"
     assert force_include["baselines"] == "baselines"

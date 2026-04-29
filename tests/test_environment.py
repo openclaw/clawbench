@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from clawbench.environment import verify_completion
-from clawbench.schemas import CompletionSpec, MemoryState, ToolCall, Transcript, TranscriptMessage
+from clawbench.environment import run_execution_check, verify_completion
+from clawbench.schemas import CompletionSpec, ExecutionCheck, FileState, MemoryState, ToolCall, Transcript, TranscriptMessage
 
 
 class MemoryFallbackClient:
@@ -43,6 +43,40 @@ async def test_memory_completion_falls_back_to_agent_memory_files(tmp_path: Path
     )
 
     assert result.score == 1.0
+
+
+@pytest.mark.asyncio
+async def test_file_completion_rejects_paths_outside_workspace(tmp_path: Path):
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    completion = CompletionSpec(files=[FileState(path="../outside.txt")])
+
+    result = await verify_completion(
+        completion,
+        workspace=tmp_path,
+        client=MemoryFallbackClient(),  # type: ignore[arg-type]
+        session_key="session-test",
+        runtime_values={},
+    )
+
+    assert result.score == 0.0
+    assert "escapes workspace" in result.failed_assertions[0]
+
+
+@pytest.mark.asyncio
+async def test_execution_check_rejects_expected_file_outside_workspace(tmp_path: Path):
+    result = await run_execution_check(
+        ExecutionCheck(
+            name="unsafe-expected",
+            command="printf secret",
+            expected_stdout_file="../outside.txt",
+        ),
+        workspace=tmp_path,
+        runtime_values={},
+    )
+
+    assert result.passed is False
+    assert "escapes workspace" in result.reason
 
 
 @pytest.mark.asyncio

@@ -165,6 +165,49 @@ def test_compose_result_from_task_stats_supports_parallel_environment_metadata()
     assert merged_result.environment["browser_tasks_serialized"] is False
 
 
+def test_run_cache_path_includes_scoring_inputs(tmp_path: Path):
+    task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount")
+    base = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test/model",
+        task_ids=[task.id],
+        prompt_variant="clear",
+        judge_model="judge-a",
+        randomize_order=False,
+    )
+    same = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test/model",
+        task_ids=[task.id],
+        prompt_variant="clear",
+        judge_model="judge-a",
+        randomize_order=False,
+    )
+    different_judge = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test/model",
+        task_ids=[task.id],
+        prompt_variant="clear",
+        judge_model="judge-b",
+        randomize_order=False,
+    )
+    different_prompt = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test/model",
+        task_ids=[task.id],
+        prompt_variant="ambiguous",
+        judge_model="judge-a",
+        randomize_order=False,
+    )
+
+    base_path = base._run_cache_path(tmp_path, task, 0)
+
+    assert "v2-" in str(base_path)
+    assert base_path == same._run_cache_path(tmp_path, task, 0)
+    assert base_path != different_judge._run_cache_path(tmp_path, task, 0)
+    assert base_path != different_prompt._run_cache_path(tmp_path, task, 0)
+
+
 @pytest.mark.asyncio
 async def test_run_records_adapter_surface(monkeypatch):
     task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount")
