@@ -8,8 +8,9 @@ simulated-user turns, and resolves `StateQuery` assertions against the
 gateway's `memory.search` / `sessions.resolve` / `cron.list` / arbitrary
 `_rpc(method)` surface.
 
-The benchmark harness now routes OpenClaw through this adapter, matching
-the same canonical task/run lifecycle used by other harness adapters.
+The legacy harness still owns the executable CLI path for now; this
+adapter is the canonical wrapper used by adapter-level tests and later
+harness wiring.
 """
 
 from __future__ import annotations

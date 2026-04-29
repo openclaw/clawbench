@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from clawbench.paths import resolve_workspace_path
 from clawbench.render import render_template, render_value
 from clawbench.schemas import (
     ExecutionCheck,
@@ -48,7 +49,14 @@ def verify_file_state(
 ) -> tuple[bool, str]:
     """Verify a single `FileState` against the workspace filesystem."""
 
-    path = workspace / render_template(spec.path, runtime_values)
+    try:
+        path = resolve_workspace_path(
+            workspace,
+            render_template(spec.path, runtime_values),
+            field=f"completion file {spec.path}",
+        )
+    except ValueError as exc:
+        return False, str(exc)
     exists = path.exists() and path.is_file()
 
     if not spec.exists:
@@ -94,7 +102,20 @@ async def run_execution_check(
     """Run a single `ExecutionCheck` subprocess and evaluate its output."""
 
     rendered_command = render_template(spec.command, runtime_values)
-    rendered_cwd = workspace / render_template(spec.cwd, runtime_values)
+    try:
+        rendered_cwd = resolve_workspace_path(
+            workspace,
+            render_template(spec.cwd, runtime_values),
+            field=f"execution check cwd for {spec.name}",
+        )
+    except ValueError as exc:
+        return ExecutionCheckResult(
+            name=spec.name,
+            command=rendered_command,
+            exit_code=-1,
+            passed=False,
+            reason=str(exc),
+        )
     rendered_env = render_value(spec.env, runtime_values)
 
     full_env = {
@@ -210,7 +231,14 @@ def evaluate_execution_result(
             return False, "stdout did not match expected text"
 
     if spec.expected_stdout_file:
-        expected_path = workspace / render_template(spec.expected_stdout_file, runtime_values)
+        try:
+            expected_path = resolve_workspace_path(
+                workspace,
+                render_template(spec.expected_stdout_file, runtime_values),
+                field=f"expected_stdout_file for {spec.name}",
+            )
+        except ValueError as exc:
+            return False, str(exc)
         if stdout.strip() != expected_path.read_text(encoding="utf-8").strip():
             return False, f"stdout did not match {spec.expected_stdout_file}"
 
@@ -223,7 +251,14 @@ def evaluate_execution_result(
             return False, "stdout JSON did not match expected JSON"
 
     if spec.expected_json_file:
-        expected_path = workspace / render_template(spec.expected_json_file, runtime_values)
+        try:
+            expected_path = resolve_workspace_path(
+                workspace,
+                render_template(spec.expected_json_file, runtime_values),
+                field=f"expected_json_file for {spec.name}",
+            )
+        except ValueError as exc:
+            return False, str(exc)
         try:
             parsed = json.loads(stdout)
         except json.JSONDecodeError as exc:
