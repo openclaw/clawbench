@@ -93,6 +93,7 @@ async def score_task_run(
     duration_ms: int,
     runtime_values: dict[str, Any],
     judge_model: str = "",
+    judge_affects_score: bool = False,
 ) -> TaskRunResult:
     annotate_transcript_tool_calls(transcript)
     completion_result = await verify_completion(
@@ -123,10 +124,11 @@ async def score_task_run(
         behavior=behavior_result.score,
         judge=(
             judge_result.score
-            if judge_result.enabled and not judge_result.error
+            if judge_affects_score and judge_result.enabled and not judge_result.error
             else None
         ),
         has_deterministic_verifier=completion_result.total_assertions > 0,
+        include_judge=judge_affects_score,
     )
     delivery_outcome = classify_delivery_outcome(
         task=task,
@@ -190,25 +192,31 @@ def combine_run_score(
     behavior: float,
     judge: float | None = None,
     has_deterministic_verifier: bool = False,
+    include_judge: bool = False,
 ) -> float:
     """Blend completion + trajectory + behavior (+ judge when available).
 
     Gating rules, per CLAWBENCH_V0_4_SPEC.md §"Disallowed Primary
     Verifiers" and §"Judge Gating":
 
-    1. If there is no judge signal, use the deterministic-only weights.
+    1. Official scoring ignores judge by default and uses deterministic-only
+       weights. This keeps `--judge-model` advisory unless a caller opts in
+       with include_judge=True.
 
-    2. If there is a judge AND the task has a deterministic verifier
+    2. If include_judge=True AND the task has a deterministic verifier
        (execution checks, file assertions, gateway assertions, etc.),
        the judge is capped at 10% of the run score, and it only
        contributes when the deterministic completion floor is met
        (completion.score >= 0.9999). This matches the spec's policy
        that "semantic quality never rescues failed completion."
 
-    3. If there is a judge AND the task has NO deterministic verifier,
+    3. If include_judge=True AND the task has NO deterministic verifier,
        the judge is the dominant signal (50%) — this is the only regime
        where an LLM judge is allowed to drive the primary score.
     """
+    if not include_judge:
+        judge = None
+
     if judge is None:
         weights = RUN_SCORE_WEIGHTS_DETERMINISTIC
         weighted_sum = (

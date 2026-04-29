@@ -191,6 +191,15 @@ def test_run_cache_path_includes_scoring_inputs(tmp_path: Path):
         judge_model="judge-b",
         randomize_order=False,
     )
+    different_judge_gate = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test/model",
+        task_ids=[task.id],
+        prompt_variant="clear",
+        judge_model="judge-a",
+        judge_affects_score=True,
+        randomize_order=False,
+    )
     different_prompt = BenchmarkHarness(
         gateway_config=GatewayConfig(),
         model="test/model",
@@ -205,6 +214,7 @@ def test_run_cache_path_includes_scoring_inputs(tmp_path: Path):
     assert "v2-" in str(base_path)
     assert base_path == same._run_cache_path(tmp_path, task, 0)
     assert base_path != different_judge._run_cache_path(tmp_path, task, 0)
+    assert base_path != different_judge_gate._run_cache_path(tmp_path, task, 0)
     assert base_path != different_prompt._run_cache_path(tmp_path, task, 0)
 
 
