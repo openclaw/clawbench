@@ -225,6 +225,7 @@ class EvalWorker:
                 job.job_id,
                 progress.mark_status("Uploading results", clear_active=True),
             )
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
             result_path = RESULTS_DIR / f"{result.submission_id}.json"
             result_path.write_text(json.dumps(result.model_dump(), indent=2), encoding="utf-8")
 

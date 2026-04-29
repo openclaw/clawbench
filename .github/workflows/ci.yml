@@ -39,6 +39,9 @@ jobs:
       - name: Run static lint
         run: python -m ruff check clawbench app.py scripts tests
 
+      - name: Run runtime contract smoke tests
+        run: python -m pytest -q tests/test_runtime_contracts.py
+
       - name: Run test suite
         run: python -m pytest -q
 
