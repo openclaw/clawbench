@@ -390,6 +390,12 @@ class TaskDefinition(BaseModel):
     privacy_tier: str = ""
     contamination_risk: str = ""
     freshness_epoch: str = ""
+    category: str = ""
+    domain: str = ""
+    functionality: list[str] = Field(default_factory=list)
+    trace_distribution: list[str] = Field(default_factory=list)
+    tool_surface: list[str] = Field(default_factory=list)
+    risk_tags: list[str] = Field(default_factory=list)
     first_used_at: str = ""
     retire_after_runs: int = 0
     similarity_hash: str = ""
