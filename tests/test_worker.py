@@ -172,6 +172,54 @@ def test_materialize_lane_runtime_spaces_ports_and_copies_auth(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
+async def test_run_serial_benchmark_forwards_judge_score_gate(monkeypatch):
+    queue = JobQueue()
+    worker = EvalWorker(queue)
+    captured: dict[str, object] = {}
+
+    async def fake_ensure_gateway() -> None:
+        return None
+
+    async def fake_preflight_browser_support_for_tasks(*args, **kwargs) -> None:
+        return None
+
+    class FakeHarness:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def run(self):
+            return SimpleNamespace(submission_id="submission-1")
+
+    monkeypatch.setattr(worker, "_stop_gateway", lambda: None)
+    monkeypatch.setattr(worker, "_ensure_gateway", fake_ensure_gateway)
+    monkeypatch.setattr(worker, "_preflight_browser_support_for_tasks", fake_preflight_browser_support_for_tasks)
+    monkeypatch.setattr("clawbench.worker.BenchmarkHarness", FakeHarness)
+
+    job = SimpleNamespace(
+        request=SimpleNamespace(
+            model="anthropic/claude-sonnet-4-6",
+            provider="anthropic",
+            judge_model="judge-model",
+            judge_affects_score=True,
+            runs_per_task=1,
+            tier="tier1",
+            scenario=None,
+            prompt_variant="clear",
+        )
+    )
+    progress = JobProgressTracker(total_tasks=1, runs_per_task=1, requested_parallel_lanes=1)
+
+    await worker._run_serial_benchmark(
+        job,
+        [DummyTask("t1-bugfix-discount", "tier1", "coding")],
+        progress,
+    )
+
+    assert captured["judge_model"] == "judge-model"
+    assert captured["judge_affects_score"] is True
+
+
+@pytest.mark.asyncio
 async def test_ensure_gateway_closes_parent_log_handle(monkeypatch):
     worker = EvalWorker(JobQueue())
     captured_handles = []

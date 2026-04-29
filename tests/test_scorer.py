@@ -1,8 +1,11 @@
+import pytest
+
 from clawbench.scorer import (
     classify_delivery_outcome,
     classify_failure_mode,
     combine_run_score,
     evaluate_behavior,
+    score_task_run,
 )
 from clawbench.schemas import (
     BehaviorExpectations,
@@ -20,6 +23,17 @@ from clawbench.schemas import (
     TrajectoryResult,
     UserTurn,
 )
+
+
+def _task_with_user() -> TaskDefinition:
+    return TaskDefinition(
+        id="test-task",
+        name="Test Task",
+        tier=Tier.TIER1,
+        family=TaskFamily.CODING,
+        surface="coding",
+        user=SimulatedUser(turns=[UserTurn(message="Fix it")]),
+    )
 
 
 def test_combine_run_score_uses_normalized_weighted_average():
@@ -109,6 +123,57 @@ def test_combine_run_score_semantic_only_task_lets_judge_dominate():
     assert abs(semantic - 0.5) < 1e-4
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("judge_affects_score", "expected_score"),
+    [
+        (False, 1.0),
+        (True, 0.9),
+    ],
+)
+async def test_score_task_run_keeps_judge_advisory_until_gate_enabled(
+    monkeypatch,
+    tmp_path,
+    judge_affects_score: bool,
+    expected_score: float,
+):
+    async def fake_verify_completion(*args, **kwargs):
+        return CompletionResult(total_assertions=1, passed_assertions=1, score=1.0)
+
+    async def fake_judge_task_run(*args, **kwargs):
+        from clawbench.schemas import JudgeResult
+
+        return JudgeResult(enabled=True, model="judge-model", score=0.0, passed=False)
+
+    monkeypatch.setattr("clawbench.scorer.verify_completion", fake_verify_completion)
+    monkeypatch.setattr("clawbench.scorer.judge_task_run", fake_judge_task_run)
+    monkeypatch.setattr(
+        "clawbench.scorer.evaluate_trajectory",
+        lambda transcript, expectations: TrajectoryResult(score=1.0),
+    )
+    monkeypatch.setattr(
+        "clawbench.scorer.evaluate_behavior",
+        lambda expectations, transcript: BehaviorResult(score=1.0),
+    )
+
+    result = await score_task_run(
+        task=_task_with_user(),
+        transcript=Transcript(),
+        workspace=tmp_path,
+        client=object(),  # type: ignore[arg-type]
+        session_key="session",
+        agent_id="agent",
+        duration_ms=100,
+        runtime_values={},
+        judge_model="judge-model",
+        judge_affects_score=judge_affects_score,
+    )
+
+    assert result.judge_result.enabled is True
+    assert result.judge_result.score == 0.0
+    assert result.run_score == expected_score
+
+
 def test_evaluate_behavior_counts_later_tool_work_as_progress():
     transcript = Transcript(
         messages=[
@@ -130,14 +195,7 @@ def test_evaluate_behavior_counts_later_tool_work_as_progress():
 
 
 def test_classify_failure_mode_flags_hallucinated_completion():
-    task = TaskDefinition(
-        id="test-task",
-        name="Test Task",
-        tier=Tier.TIER1,
-        family=TaskFamily.CODING,
-        surface="coding",
-        user=SimulatedUser(turns=[UserTurn(message="Fix it")]),
-    )
+    task = _task_with_user()
     transcript = Transcript(messages=[TranscriptMessage(role="assistant", text="All done. Tests pass now.")])
     failure_mode = classify_failure_mode(
         task=task,
@@ -152,14 +210,7 @@ def test_classify_failure_mode_flags_hallucinated_completion():
 
 
 def test_classify_failure_mode_prefers_unsafe_mutation():
-    task = TaskDefinition(
-        id="test-task",
-        name="Test Task",
-        tier=Tier.TIER1,
-        family=TaskFamily.CODING,
-        surface="coding",
-        user=SimulatedUser(turns=[UserTurn(message="Fix it")]),
-    )
+    task = _task_with_user()
     failure_mode = classify_failure_mode(
         task=task,
         transcript=Transcript(),
@@ -173,14 +224,7 @@ def test_classify_failure_mode_prefers_unsafe_mutation():
 
 
 def test_classify_delivery_outcome_supports_partial_credit():
-    task = TaskDefinition(
-        id="test-task",
-        name="Test Task",
-        tier=Tier.TIER1,
-        family=TaskFamily.CODING,
-        surface="coding",
-        user=SimulatedUser(turns=[UserTurn(message="Fix it")]),
-    )
+    task = _task_with_user()
 
     assert (
         classify_delivery_outcome(
