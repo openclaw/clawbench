@@ -3,8 +3,24 @@ from pathlib import Path
 import pytest
 
 from clawbench.client import GatewayConfig
+from clawbench.adapters.base import AdapterContext, AgentAdapter, PhaseResult, StateQueryResult
+from clawbench.canonical import AdapterCapability, CanonicalPhase, StateQuery
 from clawbench.harness import BenchmarkHarness
-from clawbench.schemas import CompletionResult, JudgeResult, TaskRunResult
+from clawbench.schemas import (
+    CompletionResult,
+    CompletionSpec,
+    FileState,
+    JudgeExpectations,
+    JudgeResult,
+    SimulatedUser,
+    TaskDefinition,
+    TaskFamily,
+    TaskRunResult,
+    Tier,
+    Transcript,
+    TranscriptMessage,
+    UserTurn,
+)
 from clawbench.tasks import load_all_tasks
 
 
@@ -163,6 +179,29 @@ def test_compose_result_from_task_stats_supports_parallel_environment_metadata()
     assert merged_result.environment["parallel_lanes"] == 2
     assert merged_result.environment["requested_parallel_lanes"] == 3
     assert merged_result.environment["browser_tasks_serialized"] is False
+    assert merged_result.environment["dimension_coverage"] == {
+        "category": 1,
+        "domain": 1,
+        "functionality": 3,
+        "trace_distribution": 4,
+        "tool_surface": 2,
+        "risk_tag": 1,
+    }
+    assert merged_result.task_results[0].category == "software_engineering"
+    assert merged_result.task_results[0].domain == "devtools"
+
+    category = {item.value: item for item in merged_result.category_results}
+    assert category["software_engineering"].task_ids == [task.id]
+    assert category["software_engineering"].weighted_score == pytest.approx(
+        base_result.overall_weighted_query_score
+    )
+
+    functionality_values = {item.value for item in merged_result.functionality_results}
+    assert {"bugfix", "regression_repair", "test_verification"}.issubset(functionality_values)
+    trace_values = {item.value for item in merged_result.trace_distribution_results}
+    assert {"read_heavy", "edit_heavy", "execute_heavy", "recovery_heavy"}.issubset(trace_values)
+    assert "category" in merged_result.dimension_results
+    assert merged_result.dimension_results["category"] == merged_result.category_results
 
 
 @pytest.mark.asyncio
@@ -206,7 +245,7 @@ async def test_run_rejects_registered_but_unwired_adapter(monkeypatch):
     harness = BenchmarkHarness(
         gateway_config=GatewayConfig(),
         model="test-model",
-        adapter="hermes",
+        adapter="codex",
         runs_per_task=1,
         randomize_order=False,
         print_report=False,
@@ -214,4 +253,183 @@ async def test_run_rejects_registered_but_unwired_adapter(monkeypatch):
     )
 
     with pytest.raises(ValueError, match="not yet wired"):
+        await harness.run()
+
+
+def _files_only_definition(judge: JudgeExpectations | None = None) -> TaskDefinition:
+    return TaskDefinition(
+        id="adapter-files-only",
+        name="Adapter files only",
+        tier=Tier.TIER1,
+        family=TaskFamily.CODING,
+        surface="coding",
+        user=SimulatedUser(
+            max_turns=1,
+            turns=[UserTurn(message="Create answer.txt")],
+        ),
+        completion=CompletionSpec(
+            files=[FileState(path="answer.txt", exists=True, content_contains=["done"])],
+        ),
+        judge=judge,
+    )
+
+
+class FakeAgentAdapter(AgentAdapter):
+    name = "hermes"
+    capabilities = {AdapterCapability.FILES, AdapterCapability.EXECUTION}
+
+    async def setup(self, ctx: AdapterContext) -> None:
+        return None
+
+    async def run_phase(self, phase: CanonicalPhase, ctx: AdapterContext) -> PhaseResult:
+        (ctx.workspace / "answer.txt").write_text("done\n", encoding="utf-8")
+        message = TranscriptMessage(role="assistant", text="Created answer.txt and verified it.")
+        ctx.transcript.messages.append(message)
+        return PhaseResult(messages=[message], completed_normally=True)
+
+    async def verify_state_query(self, query: StateQuery, ctx: AdapterContext) -> StateQueryResult:
+        return StateQueryResult(ok=False, capability_missing=True)
+
+    async def teardown(self, ctx: AdapterContext) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_hermes_adapter_runs_through_scoring_harness(monkeypatch, tmp_path: Path):
+    task = _files_only_definition()
+    monkeypatch.setattr("clawbench.harness.load_all_tasks", lambda **_: [task])
+    monkeypatch.setattr("clawbench.harness.get_adapter", lambda name: FakeAgentAdapter)
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAWBENCH_RUN_CACHE_DIR", "")
+
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="openai/gpt-5.5",
+        adapter="hermes",
+        runs_per_task=1,
+        randomize_order=False,
+        print_report=False,
+        quiet=True,
+    )
+
+    result = await harness.run()
+    run = harness.last_task_runs[task.id][0]
+
+    assert result.environment["adapter"] == "hermes"
+    assert result.environment["executable_adapters"] == ["hermes", "openclaw"]
+    assert run.error is None
+    assert run.completion_result.score == 1.0
+    assert run.delivery_outcome.value == "pass"
+
+
+@pytest.mark.asyncio
+async def test_openclaw_uses_shared_adapter_scoring_path(monkeypatch, tmp_path: Path):
+    task = _files_only_definition()
+    monkeypatch.setattr("clawbench.harness.load_all_tasks", lambda **_: [task])
+    monkeypatch.setattr("clawbench.harness.get_adapter", lambda name: FakeAgentAdapter)
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAWBENCH_RUN_CACHE_DIR", "")
+
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="openai/gpt-5.5",
+        adapter="openclaw",
+        runs_per_task=1,
+        randomize_order=False,
+        print_report=False,
+        quiet=True,
+    )
+
+    result = await harness.run()
+    run = harness.last_task_runs[task.id][0]
+
+    assert result.environment["adapter"] == "openclaw"
+    assert run.error is None
+    assert run.completion_result.score == 1.0
+    assert run.delivery_outcome.value == "pass"
+
+
+@pytest.mark.asyncio
+async def test_adapter_scoring_uses_advisory_judge(monkeypatch, tmp_path: Path):
+    task = _files_only_definition(
+        JudgeExpectations(
+            rubric="Reward the answer when it is concise.",
+            artifact_paths=["answer.txt"],
+            passing_threshold=0.4,
+        )
+    )
+    monkeypatch.setattr("clawbench.harness.load_all_tasks", lambda **_: [task])
+    monkeypatch.setattr("clawbench.harness.get_adapter", lambda name: FakeAgentAdapter)
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAWBENCH_RUN_CACHE_DIR", "")
+
+    class FakeJudgeGateway:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def create_session(self, *, model: str, label: str) -> str:
+            assert model == "judge-model"
+            assert label.startswith("clawbench-judge-")
+            return "judge-session"
+
+        async def subscribe(self, session_key: str) -> None:
+            assert session_key == "judge-session"
+
+        async def send_and_wait(self, session_key: str, message: str):
+            assert session_key == "judge-session"
+            assert "done" in message
+            return Transcript(
+                messages=[
+                    TranscriptMessage(
+                        role="assistant",
+                        text='{"score": 0.5, "confidence": 0.8, "reason": "OK", "rubric_hits": [], "rubric_misses": []}',
+                    )
+                ]
+            )
+
+        async def delete_session(self, session_key: str) -> None:
+            assert session_key == "judge-session"
+
+    monkeypatch.setattr("clawbench.harness.GatewayClient", lambda config: FakeJudgeGateway())
+
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="openai/gpt-5.5",
+        adapter="hermes",
+        judge_model="judge-model",
+        runs_per_task=1,
+        randomize_order=False,
+        print_report=False,
+        quiet=True,
+    )
+
+    result = await harness.run()
+    run = harness.last_task_runs[task.id][0]
+
+    assert run.judge_result.enabled is True
+    assert run.judge_result.score == pytest.approx(0.5)
+    assert run.run_score == pytest.approx(0.95)
+    assert result.overall_judge_score == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_hermes_adapter_filters_incompatible_tasks(monkeypatch):
+    task = next(task for task in load_all_tasks() if task.id == "t4-memory-recall-continuation")
+    monkeypatch.setattr("clawbench.harness.load_all_tasks", lambda **_: [task])
+    monkeypatch.setattr("clawbench.harness.get_adapter", lambda name: FakeAgentAdapter)
+
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="openai/gpt-5.5",
+        adapter="hermes",
+        runs_per_task=1,
+        randomize_order=False,
+        print_report=False,
+        quiet=True,
+    )
+
+    with pytest.raises(ValueError, match="No selected tasks are compatible"):
         await harness.run()

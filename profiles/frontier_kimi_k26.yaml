@@ -1,0 +1,26 @@
+profile:
+  name: frontier-kimi-k26
+  base_model: openrouter/moonshotai/kimi-k2.6
+  notes: |
+    Frontier agentic coding model comparison: Kimi K2.6 (open).
+    Moonshot AI newer revision. Plugin stack IDENTICAL across profiles so
+    the base model is the only structural variable. Any score delta is
+    attributable to the model, not the scaffold.
+  plugins:
+    enabled:
+      - anthropic
+      - id: memory-lancedb
+        config:
+          dimensions: 1536
+      - browser-playwright
+    slots:
+      memory: memory-lancedb
+      contextEngine: builtin
+    tools_allow:
+      - bash
+      - file_read
+      - file_edit
+      - browser_navigate
+      - browser_click
+      - memory_read
+      - memory_write

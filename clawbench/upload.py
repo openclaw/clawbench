@@ -1,18 +1,30 @@
 """Upload benchmark results to a Hugging Face Dataset.
 
-Each submission is written as its own parquet shard. This avoids the
-read-modify-write race caused by rewriting the single `submissions`
-split file for every completed job.
+IMPORTANT — why this file calls `load_dataset` before `push_to_hub`:
+
+`datasets.Dataset.push_to_hub(repo, split="submissions")` writes a single
+parquet shard to `data/submissions-00000-of-00001.parquet`, REPLACING
+whatever was there. If you push N submissions in sequence without
+reading first, only the Nth row survives — the previous N-1 are lost.
+
+`upload_result()` therefore:
+  1. Loads the existing `submissions` split if it exists
+  2. Appends the new row
+  3. Deduplicates by `submission_id` (so a retried upload of the same
+     run doesn't create two rows)
+  4. Pushes the combined dataset as a fresh parquet shard
+
+At ClawBench's current submission rate (1-2 concurrent jobs) the read-
+then-write race window is negligible. If cross-worker concurrency ever
+becomes material we should move to an actually append-only format
+(e.g. write per-submission parquet shards under `data/submission-<id>-
+of-NNNNN.parquet` instead of overwriting a single shard).
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import re
-import tempfile
-from pathlib import Path
 
 from clawbench.hub import ensure_dataset_repo, resolve_dataset_repo
 from clawbench.schemas import BenchmarkResult
@@ -67,15 +79,15 @@ async def upload_result(
         "official_hidden_score": result.official_hidden_score,
         "clear_prompt_score": result.clear_prompt_score,
         "ambiguous_prompt_score": result.ambiguous_prompt_score,
-        "overall_delivery_outcome_counts": _json_column(result.overall_delivery_outcome_counts),
-        "overall_failure_mode_counts": _json_column(result.overall_failure_mode_counts),
+        "overall_delivery_outcome_counts": result.overall_delivery_outcome_counts,
+        "overall_failure_mode_counts": result.overall_failure_mode_counts,
         "overall_pass_hat_k": result.overall_pass_hat_k,
         "overall_ci_lower": result.overall_ci_lower,
         "overall_ci_upper": result.overall_ci_upper,
         "certified": result.certified,
         "environment_checksum": result.environment_checksum,
-        "environment": _json_column(result.environment),
-        "tier_scores": _json_column({
+        "environment": str(result.environment),
+        "tier_scores": {
             tier_result.tier: {
                 "mean_task_score": tier_result.mean_task_score,
                 "mean_completion": tier_result.mean_completion,
@@ -87,8 +99,8 @@ async def upload_result(
                 "ci_upper": tier_result.ci_upper,
             }
             for tier_result in result.tier_results
-        }),
-        "scenario_scores": _json_column({
+        },
+        "scenario_scores": {
             scenario_result.scenario: {
                 "mean_task_score": scenario_result.mean_task_score,
                 "weighted_score": scenario_result.weighted_score,
@@ -101,8 +113,27 @@ async def upload_result(
                 "total_weight": scenario_result.total_weight,
             }
             for scenario_result in result.scenario_results
-        }),
-        "task_results": _json_column([
+        },
+        "dimension_scores": {
+            dimension: {
+                item.value: {
+                    "mean_task_score": item.mean_task_score,
+                    "weighted_score": item.weighted_score,
+                    "mean_completion": item.mean_completion,
+                    "mean_trajectory": item.mean_trajectory,
+                    "mean_behavior": item.mean_behavior,
+                    "mean_judge": item.mean_judge,
+                    "mean_reliability": item.mean_reliability,
+                    "pass_hat_k_rate": item.pass_hat_k_rate,
+                    "task_count": item.task_count,
+                    "total_weight": item.total_weight,
+                    "task_ids": item.task_ids,
+                }
+                for item in dimension_results
+            }
+            for dimension, dimension_results in result.dimension_results.items()
+        },
+        "task_results": [
             {
                 "task_id": task.task_id,
                 "tier": task.tier,
@@ -116,6 +147,12 @@ async def upload_result(
                 "pool": task.pool,
                 "subsets": task.subsets,
                 "capabilities": task.capabilities,
+                "category": task.category,
+                "domain": task.domain,
+                "functionality": task.functionality,
+                "trace_distribution": task.trace_distribution,
+                "tool_surface": task.tool_surface,
+                "risk_tags": task.risk_tags,
                 "mean_task_score": task.mean_task_score,
                 "mean_run_score": task.mean_run_score,
                 "mean_completion_score": task.mean_completion_score,
@@ -143,36 +180,50 @@ async def upload_result(
                 "runs": task.runs,
             }
             for task in result.task_results
-        ]),
+        ],
     }
 
     api = HfApi(token=hf_token)
     ensure_dataset_repo(api, resolved_repo)
 
-    ds = Dataset.from_list([row])
-    shard_name = _submission_shard_name(result.submission_id)
-    with tempfile.TemporaryDirectory(prefix="clawbench-upload-") as tmp_dir:
-        local_path = Path(tmp_dir) / shard_name
-        ds.to_parquet(str(local_path))
-        api.upload_file(
-            path_or_fileobj=str(local_path),
-            path_in_repo=f"data/submissions/{shard_name}",
-            repo_id=resolved_repo,
-            repo_type="dataset",
+    # Read-then-append: load the existing submissions split, add the
+    # new row, deduplicate by submission_id, push the combined dataset
+    # so we never clobber prior rows.
+    combined_rows: list[dict] = []
+    try:
+        from datasets import load_dataset
+
+        existing = load_dataset(
+            resolved_repo,
+            split="submissions",
+            token=hf_token,
         )
+        combined_rows = [dict(r) for r in existing]
+        logger.info(
+            "Read %d existing submission row(s) from %s",
+            len(combined_rows),
+            resolved_repo,
+        )
+    except Exception as exc:
+        logger.info(
+            "No existing submissions split to append to (%s); starting fresh",
+            exc,
+        )
+
+    new_submission_id = row.get("submission_id")
+    if new_submission_id:
+        combined_rows = [
+            r for r in combined_rows
+            if r.get("submission_id") != new_submission_id
+        ]
+    combined_rows.append(row)
+
+    ds = Dataset.from_list(combined_rows)
+    ds.push_to_hub(resolved_repo, split="submissions", token=hf_token)
     url = f"https://huggingface.co/datasets/{resolved_repo}"
     logger.info(
-        "Result uploaded to %s as append-only shard %s",
+        "Results uploaded to %s (%d total submission rows)",
         url,
-        shard_name,
+        len(combined_rows),
     )
     return url
-
-
-def _submission_shard_name(submission_id: str) -> str:
-    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", submission_id.strip()).strip(".-")
-    return f"{safe_id or 'submission'}.parquet"
-
-
-def _json_column(value: object) -> str:
-    return json.dumps(value, default=str, sort_keys=True, separators=(",", ":"))

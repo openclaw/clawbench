@@ -43,6 +43,13 @@ mkdir -p "$CLAWBENCH_RUN_CACHE_DIR"
 # OOM fix: give the gateway Node process a 4GB old-space ceiling instead of the default ~2GB.
 # Scoped via env so we don't stomp on other Node processes (clawbench itself is python).
 export NODE_OPTIONS="--max-old-space-size=4096"
+# OpenClaw 4.22+ has slower agents.create / sessions.create on cold start
+# (we observed 72s for opus-4-7). Bump RPC timeouts so the harness doesn't
+# cancel mid-flight. Override defaults of 30s / 60s respectively.
+export CLAWBENCH_CONNECT_TIMEOUT="${CLAWBENCH_CONNECT_TIMEOUT:-120}"
+export CLAWBENCH_REQUEST_TIMEOUT="${CLAWBENCH_REQUEST_TIMEOUT:-300}"
+export CLAWBENCH_PER_RUN_BUDGET_SECONDS="${CLAWBENCH_PER_RUN_BUDGET_SECONDS:-900}"
+export HERMES_STEP_TIMEOUT_SECONDS="${HERMES_STEP_TIMEOUT_SECONDS:-180}"
 
 # State-dir isolation: the shared /home/node/.openclaw mount accumulates cruft
 # across sweeps (agents/, workspace/, logs/, memory/, stale openclaw.json.*.tmp)
@@ -73,8 +80,51 @@ done
 # Ensure runtime dirs exist but are empty
 mkdir -p "$FRESH_STATE/agents" "$FRESH_STATE/workspace" "$FRESH_STATE/logs" "$FRESH_STATE/memory" "$FRESH_STATE/cache"
 export OPENCLAW_STATE_DIR="$FRESH_STATE"
+export OPENCLAW_CONFIG_PATH="$FRESH_STATE/openclaw.json"
 echo "[state-isolate] OPENCLAW_STATE_DIR=$OPENCLAW_STATE_DIR"
 du -sh "$FRESH_STATE" 2>/dev/null | sed 's/^/[state-isolate] size: /'
+
+python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+cfg_path = Path(os.environ["OPENCLAW_CONFIG_PATH"])
+data = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+
+def set_nested(root, dotted, value):
+    cursor = root
+    parts = dotted.split(".")
+    for part in parts[:-1]:
+        child = cursor.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            cursor[part] = child
+        cursor = child
+    cursor[parts[-1]] = value
+
+exec_host = os.environ.get("OPENCLAW_EXEC_HOST", "gateway").strip().lower()
+if exec_host not in {"auto", "gateway", "sandbox", "node"}:
+    raise SystemExit(f"invalid OPENCLAW_EXEC_HOST={exec_host!r}")
+
+set_nested(data, "tools.exec.host", exec_host)
+set_nested(data, "tools.exec.security", "full")
+set_nested(data, "tools.exec.ask", "off")
+set_nested(data, "approvals.exec.enabled", False)
+cfg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+approvals_path = cfg_path.with_name("exec-approvals.json")
+approvals = {
+    "version": 1,
+    "socket": {
+        "path": str(approvals_path.with_suffix(".sock")),
+        "token": "container-single-eval-token",
+    },
+    "defaults": {"security": "full", "ask": "off", "askFallback": "full"},
+    "agents": {"*": {"security": "full", "ask": "off", "askFallback": "full"}},
+}
+approvals_path.write_text(json.dumps(approvals, indent=2) + "\n", encoding="utf-8")
+PY
 
 # Map label -> cache subdir (matches what clawbench writes)
 case "$SWEEP_MODEL" in
@@ -82,14 +132,16 @@ case "$SWEEP_MODEL" in
   anthropic/claude-sonnet-4-7)      CACHE_SUB="anthropic_claude-sonnet-4-7" ;;
   anthropic/claude-opus-4-6)        CACHE_SUB="anthropic_claude-opus-4-6" ;;
   anthropic/claude-sonnet-4-6)      CACHE_SUB="anthropic_claude-sonnet-4-6" ;;
+  openai/gpt-5.5)                   CACHE_SUB="openai_gpt-5.5" ;;
   openai/gpt-5.4)                   CACHE_SUB="openai_gpt-5.4" ;;
   openai/gpt-5.2)                   CACHE_SUB="openai_gpt-5.2" ;;
   google/gemini-3.1-pro-preview)    CACHE_SUB="google_gemini-3.1-pro-preview" ;;
   openrouter/z-ai/glm-5.1)          CACHE_SUB="openrouter_z-ai_glm-5.1" ;;
   openrouter/qwen/qwen3.6-plus)     CACHE_SUB="openrouter_qwen_qwen3.6-plus" ;;
   openrouter/minimax/minimax-m2.7)  CACHE_SUB="openrouter_minimax_minimax-m2.7" ;;
+  openrouter/moonshotai/kimi-k2.6)  CACHE_SUB="openrouter_moonshotai_kimi-k2.6" ;;
   openrouter/moonshotai/kimi-k2.5)  CACHE_SUB="openrouter_moonshotai_kimi-k2.5" ;;
-  # kimi-k2.6 is not yet supported in the openclaw version under test — skip.
+  deepseek/v4-pro)                  CACHE_SUB="deepseek_v4-pro" ;;
   *) CACHE_SUB="" ;;
 esac
 
@@ -139,11 +191,19 @@ if [ $ready -ne 1 ]; then
 fi
 
 echo "===== $(date '+%H:%M:%S') starting $SWEEP_LABEL ($SWEEP_MODEL) ====="
+# NOTE: --profile intentionally OMITTED unless USE_PROFILE=1 is set. The
+# legacy frontier_*.yaml profile format is incompatible with OpenClaw
+# 4.22+ (loads n_tools_total=0). Running with the default openclaw tool
+# stack — identical across all models, so comparisons stay valid.
+PROFILE_ARG=""
+if [ -n "${USE_PROFILE:-}" ] && [ -f "$SWEEP_PROFILE" ]; then
+  PROFILE_ARG="--profile $SWEEP_PROFILE"
+fi
 clawbench run \
   --model "$SWEEP_MODEL" \
   --runs 3 \
-  --concurrency 4 \
-  --profile "$SWEEP_PROFILE" \
+  --concurrency "${CLAWBENCH_CONCURRENCY:-1}" \
+  $PROFILE_ARG \
   --judge-model "anthropic/claude-sonnet-4-6" \
   -o "$OUT" \
   > "$LOG" 2>&1

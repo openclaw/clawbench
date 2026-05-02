@@ -35,6 +35,7 @@ Each trace record should have this top-level structure:
   "plugins": [],
   "skills": [],
   "prompts": {},
+  "task_metadata": {},
   "transcript": {
     "messages": []
   },
@@ -58,6 +59,7 @@ These fields should always be present:
 - `config`: effective runtime configuration for the run
 - `plugins`: plugins or tool bundles available to the agent, even if empty
 - `prompts.user`: the user task or user-visible request
+- `task_metadata`: benchmark task axes, when the trace corresponds to a ClawBench task
 - `transcript.messages`: ordered message list for the run
 
 ## Strongly Recommended Fields
@@ -75,7 +77,28 @@ These materially improve trace quality and downstream usefulness:
 
 ## Metadata We Want
 
-### 1. Harness
+### 1. Task Metadata
+
+When a trace maps to a benchmark task, include the same flat task axes
+used by ClawBench result aggregation. These axes are intentionally
+orthogonal and harness-neutral; do not nest them under an agent product
+or plugin stack.
+
+Recommended fields:
+
+```json
+{
+  "task_id": "t4-browser-research-and-code",
+  "category": "software_engineering",
+  "domain": "devtools",
+  "functionality": ["browser_research", "api_contract_extraction", "code_repair"],
+  "trace_distribution": ["browser_heavy", "read_heavy", "edit_heavy", "execute_heavy"],
+  "tool_surface": ["browser", "filesystem", "shell", "local_service"],
+  "risk_tags": ["code_regression", "hallucination"]
+}
+```
+
+### 2. Harness
 
 Use `harness` to describe the execution framework itself.
 
@@ -95,7 +118,7 @@ Recommended fields:
 }
 ```
 
-### 2. Model
+### 3. Model
 
 Use `model` to identify the model under test.
 
@@ -111,7 +134,7 @@ Recommended fields:
 }
 ```
 
-### 3. Config
+### 4. Config
 
 Use `config` for the effective runtime settings that could change behavior.
 
@@ -134,7 +157,7 @@ Recommended fields:
 
 If a field is unavailable, omit it rather than inventing a value.
 
-### 4. Plugins
+### 5. Plugins
 
 Use `plugins` for tools, plugin bundles, MCP servers, extensions, or other agent capabilities exposed by the harness.
 
@@ -162,7 +185,7 @@ Recommended entry shape:
 }
 ```
 
-### 5. Skills
+### 6. Skills
 
 Use `skills` for reusable instruction bundles, templates, internal playbooks, or any named capability layer available to the agent.
 
@@ -186,7 +209,7 @@ Recommended entry shape:
 }
 ```
 
-### 6. Prompts
+### 7. Prompts
 
 Use `prompts` for the prompt stack that shaped agent behavior.
 
@@ -217,7 +240,7 @@ Example:
 }
 ```
 
-### 7. Transcript
+### 8. Transcript
 
 `transcript.messages` is the core behavioral record.
 

@@ -63,13 +63,21 @@ def get_hidden_release_dir(release_id: str, *, private_tasks_root: Path | None =
 
 
 def compute_task_snapshot_fingerprint(tasks: list[TaskDefinition]) -> str:
-    payload = "|".join(
-        sorted(
-            f"{task.id}:{task.pool.value}:{task.variant_group}:{task.variant_id}:{task.release_id}"
-            for task in tasks
+    payload = [
+        task.model_dump(mode="json", exclude_none=False)
+        for task in sorted(
+            tasks,
+            key=lambda task: (
+                task.id,
+                task.pool.value,
+                task.variant_group,
+                task.variant_id,
+                task.release_id,
+            ),
         )
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    ]
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def load_active_release(path: Path | None = None) -> ActiveReleaseManifest | None:

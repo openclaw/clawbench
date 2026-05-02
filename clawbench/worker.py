@@ -34,6 +34,7 @@ STALE_EVALUATION_SECONDS = max(
     JOB_HEARTBEAT_INTERVAL_SECONDS * 4,
     int(os.environ.get("CLAWBENCH_STALE_EVALUATION_SECONDS", "1800")),
 )
+OPENCLAW_EVAL_EXEC_HOSTS = {"auto", "gateway", "sandbox", "node"}
 
 
 @dataclass
@@ -45,6 +46,12 @@ class ParallelLane:
     port: int = 0
     state_dir: Path | None = None
     log_path: Path | None = None
+
+    @property
+    def home_dir(self) -> Path | None:
+        if self.state_dir is None:
+            return None
+        return self.state_dir.parent / "home"
 
     @property
     def ws_url(self) -> str:
@@ -300,6 +307,7 @@ class EvalWorker:
             prompt_variant=job.request.prompt_variant,
             prepare_run=prepare_run,
             progress_callback=progress_callback,
+            tool_profile_name=os.environ.get("CLAWBENCH_TOOL_PROFILE_NAME", "") or None,
         )
         return await harness.run()
 
@@ -369,6 +377,7 @@ class EvalWorker:
                 tier=job.request.tier,
                 scenario=job.request.scenario,
                 prompt_variant=job.request.prompt_variant,
+                tool_profile_name=os.environ.get("CLAWBENCH_TOOL_PROFILE_NAME", "") or None,
             )
             return summary_harness.compose_result_from_task_stats(
                 ordered_stats,
@@ -382,7 +391,8 @@ class EvalWorker:
             )
         finally:
             self._stop_parallel_gateways()
-            shutil.rmtree(job_root, ignore_errors=True)
+            if os.environ.get("CLAWBENCH_KEEP_PARALLEL_LANE_ROOT", "").strip() != "1":
+                shutil.rmtree(job_root, ignore_errors=True)
 
     async def _run_parallel_lane(self, job, lane: ParallelLane, progress: JobProgressTracker):
         gateway_cmd = self._find_gateway_cmd()
@@ -430,6 +440,7 @@ class EvalWorker:
             progress_callback=progress_callback,
             print_report=False,
             quiet=True,
+            tool_profile_name=os.environ.get("CLAWBENCH_TOOL_PROFILE_NAME", "") or None,
         )
         result = await harness.run()
         await self._sync_job_progress(job.job_id, progress.clear_lane(lane.index))
@@ -444,6 +455,9 @@ class EvalWorker:
         return load_all_tasks(
             tier=job.request.tier,
             scenario=job.request.scenario,
+            task_ids=list(getattr(job.request, "task_ids", []) or None)
+            if getattr(job.request, "task_ids", None)
+            else None,
             prompt_variant=job.request.prompt_variant,
         )
 
@@ -503,9 +517,35 @@ class EvalWorker:
     def _materialize_lane_runtime(self, lane: ParallelLane, job_root: Path) -> None:
         lane_root = job_root / f"lane-{lane.index}"
         lane.state_dir = lane_root / "state"
+        lane_home = lane.home_dir
+        if lane_home is not None:
+            (lane_home / ".config").mkdir(parents=True, exist_ok=True)
         lane.log_path = lane_root / "gateway.log"
         lane.port = GATEWAY_PORT + (lane.index * GATEWAY_PORT_SPACING)
         self._seed_lane_state_dir(lane.state_dir)
+
+    def _run_lane_prepare_hook(self, lane: ParallelLane) -> None:
+        hook = os.environ.get("CLAWBENCH_LANE_PREPARE_CMD", "").strip()
+        if not hook:
+            return
+        if lane.state_dir is None:
+            raise RuntimeError(f"Lane {lane.index + 1} state dir missing before prepare hook")
+        lane_home = lane.home_dir
+        if lane_home is None:
+            raise RuntimeError(f"Lane {lane.index + 1} home dir missing before prepare hook")
+        (lane_home / ".config").mkdir(parents=True, exist_ok=True)
+        hook_env = {
+            **os.environ,
+            "HOME": str(lane_home),
+            "OPENCLAW_HOME": str(lane_home),
+            "OPENCLAW_STATE_DIR": str(lane.state_dir),
+            "OPENCLAW_CONFIG_PATH": str(lane.state_dir / "openclaw.json"),
+            "XDG_CONFIG_HOME": str(lane_home / ".config"),
+            "CLAWBENCH_LANE_INDEX": str(lane.index),
+            "CLAWBENCH_LANE_PORT": str(lane.port),
+        }
+        logger.info("Running lane %d prepare hook", lane.index + 1)
+        subprocess.run([hook], env=hook_env, check=True)
 
     def _seed_lane_state_dir(self, target_state_dir: Path) -> None:
         source_state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR", os.path.expanduser("~/.openclaw")))
@@ -625,6 +665,10 @@ class EvalWorker:
         _set_nested(data, "browser.headless", True)
         _set_nested(data, "browser.noSandbox", True)
         _set_nested(data, "agents.defaults.skipBootstrap", True)
+        _set_nested(data, "tools.exec.host", self._openclaw_eval_exec_host())
+        _set_nested(data, "tools.exec.security", "full")
+        _set_nested(data, "tools.exec.ask", "off")
+        _set_nested(data, "approvals.exec.enabled", False)
         if self._active_model:
             _set_nested(data, "agents.defaults.model.primary", self._active_model)
             _set_nested(data, "agents.defaults.subagents.model.primary", self._active_model)
@@ -632,6 +676,7 @@ class EvalWorker:
         tmp_path = cfg_path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         tmp_path.replace(cfg_path)
+        self._write_eval_exec_approvals(lane_state_dir)
 
     def _order_task_stats(self, tasks: list[TaskDefinition], combined_stats: list) -> list:
         stats_by_id = {}
@@ -724,6 +769,7 @@ class EvalWorker:
                 "token",
                 "--token",
                 gateway_token,
+                "--compact",
             ],
             stdout=open("/tmp/gateway.log", "a", encoding="utf-8"),
             stderr=subprocess.STDOUT,
@@ -759,6 +805,12 @@ class EvalWorker:
             raise RuntimeError(
                 f"Gateway /health did not respond within {health_deadline_sec}s. Log:\n{self._read_gateway_log()}"
             )
+
+        await self._wait_for_gateway_ready_marker(
+            process=self._gateway_process,
+            log_reader=lambda: self._read_gateway_log(limit=20_000),
+            description="Gateway",
+        )
 
         # Phase B: control-plane probe with retries (see the parallel
         # variant in _ensure_parallel_gateway for the detailed rationale).
@@ -809,21 +861,30 @@ class EvalWorker:
         # Re-inject the host config's env + plugins before every restart.
         if lane.state_dir is not None:
             self._reinject_host_env_to_lane(lane.state_dir)
+            self._run_lane_prepare_hook(lane)
         if lane.state_dir is None or lane.log_path is None:
             raise RuntimeError(f"Lane {lane.index + 1} runtime was not materialized before gateway startup")
+        lane_home = lane.home_dir
+        if lane_home is None:
+            raise RuntimeError(f"Lane {lane.index + 1} home was not materialized before gateway startup")
+        (lane_home / ".config").mkdir(parents=True, exist_ok=True)
 
         logger.info("Starting lane %d gateway on port %d", lane.index + 1, lane.port)
         gateway_token = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "clawbench-internal-token")
         gateway_env = {
             **os.environ,
-            "OPENCLAW_HOME": os.environ.get("OPENCLAW_HOME", os.path.expanduser("~")),
+            "HOME": str(lane_home),
+            "OPENCLAW_HOME": str(lane_home),
             "OPENCLAW_STATE_DIR": str(lane.state_dir),
+            "OPENCLAW_CONFIG_PATH": str(lane.state_dir / "openclaw.json"),
+            "XDG_CONFIG_HOME": str(lane_home / ".config"),
             "OPENCLAW_SKIP_GMAIL_WATCHER": "1",
             "OPENCLAW_SKIP_CANVAS_HOST": "1",
             "OPENCLAW_NO_RESPAWN": "1",
         }
         self._configure_browser_runtime(gateway_cmd, gateway_env)
         lane.log_path.parent.mkdir(parents=True, exist_ok=True)
+        lane.log_path.write_text("", encoding="utf-8")
         log_handle = lane.log_path.open("a", encoding="utf-8")
         try:
             process = subprocess.Popen(
@@ -841,6 +902,7 @@ class EvalWorker:
                     "token",
                     "--token",
                     gateway_token,
+                    "--compact",
                 ],
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
@@ -882,6 +944,12 @@ class EvalWorker:
                 f"Lane {lane.index + 1} gateway /health did not respond within {health_deadline_sec}s. "
                 f"Log:\n{self._read_parallel_gateway_log(lane)}"
             )
+
+        await self._wait_for_gateway_ready_marker(
+            process=process,
+            log_reader=lambda: self._read_parallel_gateway_log(lane, limit=20_000),
+            description=f"Lane {lane.index + 1} gateway",
+        )
 
         # Phase B: control-plane probe with explicit retries. A healthy
         # /health response does not guarantee sessions.create works
@@ -994,6 +1062,10 @@ class EvalWorker:
             ("agents.defaults.skipBootstrap", True),
             ("browser.headless", True),
             ("browser.noSandbox", True),
+            ("tools.exec.host", self._openclaw_eval_exec_host()),
+            ("tools.exec.security", "full"),
+            ("tools.exec.ask", "off"),
+            ("approvals.exec.enabled", False),
         ]
         if self._active_model:
             config_pairs.extend(
@@ -1004,8 +1076,49 @@ class EvalWorker:
             )
         try:
             self._patch_openclaw_config(config_pairs)
+            state_dir = Path(
+                gateway_env.get("OPENCLAW_STATE_DIR")
+                or os.environ.get("OPENCLAW_STATE_DIR")
+                or os.path.expanduser("~/.openclaw")
+            )
+            self._write_eval_exec_approvals(state_dir)
         except Exception as exc:
             logger.warning("Direct openclaw.json patch failed: %s", exc)
+
+    @staticmethod
+    def _openclaw_eval_exec_host() -> str:
+        value = os.environ.get("OPENCLAW_EXEC_HOST", "gateway").strip().lower()
+        if value in OPENCLAW_EVAL_EXEC_HOSTS:
+            return value
+        logger.warning("Invalid OPENCLAW_EXEC_HOST=%r; using gateway", value)
+        return "gateway"
+
+    @staticmethod
+    def _write_eval_exec_approvals(state_dir: Path) -> None:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        approvals_path = state_dir / "exec-approvals.json"
+        approvals = {
+            "version": 1,
+            "socket": {
+                "path": str(approvals_path.with_suffix(".sock")),
+                "token": "clawbench-eval-token",
+            },
+            "defaults": {
+                "security": "full",
+                "ask": "off",
+                "askFallback": "full",
+            },
+            "agents": {
+                "*": {
+                    "security": "full",
+                    "ask": "off",
+                    "askFallback": "full",
+                }
+            },
+        }
+        tmp_path = approvals_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(approvals, indent=2), encoding="utf-8")
+        tmp_path.replace(approvals_path)
 
     @staticmethod
     def _patch_openclaw_config(pairs: list[tuple[str, object]]) -> None:
@@ -1051,13 +1164,15 @@ class EvalWorker:
         # Use a generous dedicated config for the probe. A healthy gateway
         # usually responds to sessions.create in under a second, but plugin
         # initialization (especially OpenRouter model list fetch) can add
-        # 10-30s after /health reports 200. The 60s outer bound ensures we
-        # don't give up during a cold-start scenario.
+        # 10-30s after /health reports 200. On cold Docker lanes OpenClaw may
+        # also install provider runtime SDKs during the first sessions.create,
+        # so keep this bound configurable and separate from steady-state RPCs.
+        probe_timeout = float(os.environ.get("CLAWBENCH_GATEWAY_PROBE_TIMEOUT_SECONDS", "180"))
         probe_config = GatewayConfig(
             url=gateway_config.url,
             token=gateway_config.token,
             connect_timeout=gateway_config.connect_timeout,
-            request_timeout=30.0,
+            request_timeout=probe_timeout,
         )
 
         async def _probe() -> None:
@@ -1068,25 +1183,67 @@ class EvalWorker:
                 await client.delete_session(session_key)
 
         try:
-            await asyncio.wait_for(_probe(), timeout=60.0)
+            await asyncio.wait_for(_probe(), timeout=probe_timeout + 10.0)
         except asyncio.TimeoutError as exc:
             raise RuntimeError(
-                "Gateway control-plane probe timed out after 60s "
+                f"Gateway control-plane probe timed out after {probe_timeout:.0f}s "
                 "(sessions.create hung on a freshly-started gateway); "
                 "lane will be retried by the queue."
             ) from exc
 
-    def _read_gateway_log(self) -> str:
+    async def _wait_for_gateway_ready_marker(self, process: subprocess.Popen, log_reader, description: str) -> None:
+        # OpenClaw 2026.4.26 can answer /health before channels and sidecars
+        # finish startup. Probing sessions.create during that window can hold the
+        # session write lock for minutes. Some lane gateway modes do not emit
+        # the final ready marker, so wait for it briefly after sidecar startup
+        # and then let the bounded control-plane probe decide.
+        ready_deadline_sec = int(os.environ.get("CLAWBENCH_GATEWAY_READY_TIMEOUT_SECONDS", "420"))
+        marker_grace_sec = int(os.environ.get("CLAWBENCH_GATEWAY_READY_MARKER_GRACE_SECONDS", "90"))
+        saw_sidecar_start = False
+        sidecar_start_elapsed: int | None = None
+        for elapsed in range(ready_deadline_sec):
+            if process.poll() is not None:
+                raise RuntimeError(
+                    f"{description} exited with code {process.returncode}. Log:\n{log_reader()[-4_000:]}"
+                )
+
+            log_text = log_reader()
+            if "[gateway] ready" in log_text:
+                logger.info("%s ready after %ss", description, elapsed)
+                return
+            if "[gateway] starting channels and sidecars" in log_text:
+                saw_sidecar_start = True
+                if sidecar_start_elapsed is None:
+                    sidecar_start_elapsed = elapsed
+            if sidecar_start_elapsed is not None and elapsed - sidecar_start_elapsed >= marker_grace_sec:
+                logger.info(
+                    "%s did not emit ready marker %ss after sidecar startup; probing control plane",
+                    description,
+                    marker_grace_sec,
+                )
+                return
+            if not saw_sidecar_start and elapsed >= 15:
+                return
+            await asyncio.sleep(1)
+
+        logger.warning(
+            "%s did not log ready within %ss; probing control plane anyway. Log:\n%s",
+            description,
+            ready_deadline_sec,
+            log_reader()[-4_000:],
+        )
+
+    def _read_gateway_log(self, limit: int = 4_000) -> str:
         try:
-            return Path("/tmp/gateway.log").read_text(encoding="utf-8", errors="replace")[-4_000:]
+            return Path("/tmp/gateway.log").read_text(encoding="utf-8", errors="replace")[-limit:]
         except Exception:
             return "(no gateway log)"
 
-    def _read_parallel_gateway_log(self, lane: ParallelLane) -> str:
+    def _read_parallel_gateway_log(self, lane: ParallelLane, limit: int = 4_000) -> str:
         if lane.log_path is None:
             return "(no gateway log)"
         try:
-            return lane.log_path.read_text(encoding="utf-8", errors="replace")[-4_000:]
+            return lane.log_path.read_text(encoding="utf-8", errors="replace")[-limit:]
         except Exception:
             return "(no gateway log)"
 

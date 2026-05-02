@@ -8,21 +8,35 @@ import hashlib
 import logging
 import os
 import shutil
+import subprocess
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from rich.console import Console
 from rich.table import Table
 
 from clawbench import __version__
+from clawbench.ablation import build_ablation_profile, git_head
+from clawbench.adapters import get_adapter
+from clawbench.adapters.base import AdapterContext
+from clawbench.adapters.hermes import HermesAdapterConfig
+from clawbench.adapters.openclaw import OpenClawAdapterConfig
+from clawbench.canonical.convert import from_task_definition
 from clawbench.client import GatewayClient, GatewayConfig
+from clawbench.environment_files import run_execution_check, verify_file_state
+from clawbench.judge import judge_task_run
 from clawbench.releases import compute_task_snapshot_fingerprint, load_active_release
 from clawbench.schemas import (
     BenchmarkResult,
+    CompletionResult,
+    DimensionResult,
     DeliveryOutcome,
+    EfficiencyResult,
+    JudgeResult,
     ScenarioResult,
     TaskDefinition,
     TaskRunResult,
@@ -30,18 +44,38 @@ from clawbench.schemas import (
     TierResult,
     Transcript,
 )
-from clawbench.scorer import classify_error_failure_mode, score_task_run
-from clawbench.session_labels import unique_session_label
+from clawbench.scorer import (
+    classify_delivery_outcome,
+    classify_error_failure_mode,
+    classify_failure_mode,
+    combine_run_score,
+    evaluate_behavior,
+)
 from clawbench.services import build_runtime_values, start_background_services, stop_background_services
-from clawbench.simulated_user import UserSimulator
 from clawbench.stats import bootstrap_ci, summarize_task_runs
 from clawbench.tasks import get_assets_dir, load_all_tasks
+from clawbench.trajectory import annotate_transcript_tool_calls, evaluate_trajectory
 
 logger = logging.getLogger(__name__)
 console = Console()
 
 KNOWN_ADAPTERS = ("openclaw", "hermes", "codex", "claude-code")
-EXECUTABLE_ADAPTERS = {"openclaw"}
+EXECUTABLE_ADAPTERS = {"openclaw", "hermes"}
+
+
+def _command_version(command: list[str]) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return ""
+    return (result.stdout or "").strip().splitlines()[0] if result.stdout else ""
 
 
 class _NullCtx:
@@ -83,6 +117,7 @@ class BenchmarkHarness:
         concurrency: int = 1,
         browser_concurrency: int = 1,
         adapter: str = "openclaw",
+        tool_profile_name: str | None = None,
     ) -> None:
         self.gateway_config = gateway_config
         self.model = model
@@ -107,6 +142,7 @@ class BenchmarkHarness:
         self.concurrency = max(1, int(concurrency))
         self.browser_concurrency = max(1, int(browser_concurrency))
         self.adapter = adapter
+        self.tool_profile_name = tool_profile_name
         self.repo_root = Path(__file__).parent.parent
         self.last_task_runs: dict[str, list[TaskRunResult]] = {}
 
@@ -135,6 +171,8 @@ class BenchmarkHarness:
         )
         if not tasks:
             raise ValueError("No tasks to run")
+
+        tasks = self._filter_tasks_for_adapter(tasks)
 
         if self.randomize_order:
             import random
@@ -261,66 +299,168 @@ class BenchmarkHarness:
             console.print(f"    [red]! {failure}[/]")
 
     async def _run_single(self, task: TaskDefinition, run_index: int) -> TaskRunResult:
-        # Per-turn timeout cap: prevents a single send_and_wait from burning the entire task
-        # timeout (often 300-600s). Default 180s is enough for any reasonable single-turn
-        # response and fails fast on stuck models. Override with env var if needed.
-        per_turn_cap = float(os.environ.get("CLAWBENCH_PER_TURN_TIMEOUT_SECONDS", "180"))
-        # Per-run hard budget: total wall time a single (task, run) is allowed to consume.
-        # Default 300s (5 min) bounds the worst case to 5min * 120 = 10h/model if fully
-        # serial, and <3h/model at lanes=4. Env override available for longer slower models.
-        per_run_budget = float(os.environ.get("CLAWBENCH_PER_RUN_BUDGET_SECONDS", "300"))
+        return await self._run_single_with_agent_adapter(task, run_index)
 
-        # Per-run result cache: allows a failed job to resume from previously completed
-        # (task, run) pairs on resubmit. Keyed by model + task + run_index so the same
-        # model's runs are reused, but different models stay isolated. The cache is
-        # written AFTER successful score_task_run and read at the start of this method.
-        # Set CLAWBENCH_RUN_CACHE_DIR="" to disable.
+    def _filter_tasks_for_adapter(self, tasks: list[TaskDefinition]) -> list[TaskDefinition]:
+        """Drop tasks the selected adapter cannot execute."""
+
+        adapter_cls = get_adapter(self.adapter)
+        adapter_config = self._adapter_config()
+        compatible: list[TaskDefinition] = []
+        skipped: list[tuple[str, str]] = []
+        for task in tasks:
+            canonical = from_task_definition(task)
+            missing = adapter_cls.missing_capabilities_for(canonical, adapter_config)
+            if missing:
+                skipped.append((task.id, ", ".join(sorted(cap.value for cap in missing))))
+                continue
+            compatible.append(task)
+
+        if skipped and not self.quiet:
+            console.print(
+                f"[yellow]Adapter '{self.adapter}' skipped {len(skipped)} incompatible task(s).[/]"
+            )
+            for task_id, caps in skipped[:5]:
+                console.print(f"    [yellow]- {task_id}: missing {caps}[/]")
+            if len(skipped) > 5:
+                console.print(f"    [yellow]- ... {len(skipped) - 5} more[/]")
+
+        if not compatible:
+            raise ValueError(
+                f"No selected tasks are compatible with adapter '{self.adapter}'. "
+                "Try a files/execution task such as t1-bugfix-discount, or use adapter 'openclaw'."
+            )
+        return compatible
+
+    def _adapter_config(self) -> object:
+        if self.adapter == "openclaw":
+            per_turn_cap = float(os.environ.get("CLAWBENCH_PER_TURN_TIMEOUT_SECONDS", "180"))
+            return OpenClawAdapterConfig(
+                gateway=self.gateway_config,
+                prompt_variant=self.prompt_variant,
+                turn_timeout_seconds=per_turn_cap,
+            )
+        if self.adapter == "hermes":
+            provider = os.environ.get("HERMES_PROVIDER") or None
+            base_url = os.environ.get("HERMES_BASE_URL") or None
+            api_mode = os.environ.get("HERMES_API_MODE") or None
+            api_key = (
+                os.environ.get("HERMES_API_KEY")
+                or os.environ.get("OPENROUTER_API_KEY")
+                or os.environ.get("OPENAI_API_KEY")
+                or None
+            )
+            if provider:
+                base_url = None
+                api_key = None
+            elif provider is None and self.model.startswith("openai/"):
+                base_url = (
+                    base_url
+                    or os.environ.get("OPENAI_BASE_URL")
+                    or ("https://api.openai.com/v1" if os.environ.get("OPENAI_API_KEY") else None)
+                )
+                host = ""
+                try:
+                    host = urlparse(base_url or "").hostname or ""
+                except Exception:
+                    host = ""
+                if host == "api.openai.com":
+                    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("HERMES_API_KEY") or None
+                    if api_mode is None and self.model.split("/", 1)[1].lower().startswith("gpt-5"):
+                        api_mode = "codex_responses"
+            elif provider is None and self.model.startswith("anthropic/"):
+                provider = "anthropic"
+                base_url = None
+                api_key = None
+            elif (
+                base_url is None
+                and os.environ.get("OPENAI_API_KEY")
+                and not os.environ.get("HERMES_API_KEY")
+                and not os.environ.get("OPENROUTER_API_KEY")
+            ):
+                base_url = "https://api.openai.com/v1"
+            enabled_toolsets = [
+                item.strip()
+                for item in os.environ.get("HERMES_TOOLSETS", "hermes-api-server").split(",")
+                if item.strip()
+            ]
+            disabled_toolsets = [
+                item.strip()
+                for item in os.environ.get("HERMES_DISABLED_TOOLSETS", "").split(",")
+                if item.strip()
+            ] or None
+            return HermesAdapterConfig(
+                model=self.model,
+                env_type=os.environ.get("HERMES_ENV_TYPE", "local"),
+                max_iterations=int(os.environ.get("HERMES_MAX_ITERATIONS", "15")),
+                timeout_seconds=int(os.environ.get("HERMES_STEP_TIMEOUT_SECONDS", "60")),
+                base_url=base_url,
+                api_key=api_key,
+                provider=provider,
+                api_mode=api_mode,
+                prompt_variant=self.prompt_variant,
+                driver_mode=os.environ.get("HERMES_DRIVER", "ai_agent"),
+                enabled_toolsets=enabled_toolsets,
+                disabled_toolsets=disabled_toolsets,
+                hermes_home=os.environ.get("HERMES_HOME_BASE") or None,
+            )
+        raise ValueError(f"No config builder for adapter '{self.adapter}'")
+
+    async def _run_single_with_agent_adapter(
+        self,
+        task: TaskDefinition,
+        run_index: int,
+    ) -> TaskRunResult:
+        per_run_budget = float(os.environ.get("CLAWBENCH_PER_RUN_BUDGET_SECONDS", "300"))
         cache_dir_env = os.environ.get("CLAWBENCH_RUN_CACHE_DIR", "/data/run_cache")
         cache_path: Path | None = None
         if cache_dir_env:
             safe_model = self.model.replace("/", "_").replace(":", "_")
-            cache_path = Path(cache_dir_env) / safe_model / task.id / f"run{run_index}.json"
+            cache_path = (
+                Path(cache_dir_env)
+                / f"{self.adapter}-{safe_model}"
+                / task.id
+                / f"run{run_index}.json"
+            )
             if cache_path.exists():
                 try:
-                    cached = TaskRunResult.model_validate_json(cache_path.read_text(encoding="utf-8"))
-                    cached.run_index = run_index
-                    logger.info(
-                        "TIMING %s/run%s total=cached score=%.2f C=%.2f T=%.2f B=%.2f J=%.2f  (resumed from %s)",
-                        task.id, run_index,
-                        cached.run_score,
-                        cached.completion_result.score,
-                        cached.trajectory_result.score,
-                        cached.behavior_result.score,
-                        cached.judge_result.score if cached.judge_result.enabled else 0.0,
-                        cache_path,
+                    cached = TaskRunResult.model_validate_json(
+                        cache_path.read_text(encoding="utf-8")
                     )
+                    cached.run_index = run_index
                     return cached
                 except Exception as exc:
-                    logger.warning("Cache load failed for %s/run%s: %s (will re-run)", task.id, run_index, exc)
+                    logger.warning(
+                        "Adapter cache load failed for %s/run%s: %s (will re-run)",
+                        task.id,
+                        run_index,
+                        exc,
+                    )
 
         workspace = self._create_run_workspace(task, run_index)
         services = []
-        session_keys: list[str] = []
-        agent_id: str | None = None
-
-        # Per-phase timings so we can see where slow runs are spending their wall time.
-        timings: dict[str, float] = {}
-
-        def _tick(label: str, since: float) -> float:
-            now = time.monotonic()
-            timings[label] = round(now - since, 2)
-            return now
-
         t_run_start = time.monotonic()
-        try:
-            t_phase = t_run_start
-            self._setup_workspace(task, workspace)
-            t_phase = _tick("workspace_setup", t_phase)
+        transcript = Transcript()
+        canonical = from_task_definition(task)
+        ctx = AdapterContext(
+            task=canonical,
+            workspace=workspace,
+            runtime_values={},
+            run_index=run_index,
+            model=self.model,
+            transcript=transcript,
+        )
 
+        try:
+            self._setup_workspace(task, workspace)
             runtime_values = build_runtime_values(
                 workspace=workspace,
                 repo_root=self.repo_root,
-                extra={"task_id": task.id, "model": self.model, "prompt_variant": self.prompt_variant},
+                extra={
+                    "task_id": task.id,
+                    "model": self.model,
+                    "prompt_variant": self.prompt_variant,
+                },
             )
             services, runtime_values = await start_background_services(
                 task.setup.background_services,
@@ -328,118 +468,65 @@ class BenchmarkHarness:
                 repo_root=self.repo_root,
                 runtime_values=runtime_values,
             )
-            t_phase = _tick("bg_services_start", t_phase)
+            ctx.runtime_values = runtime_values
 
-            transcript = Transcript()
+            adapter_cls = get_adapter(self.adapter)
+            adapter = adapter_cls(self._adapter_config())  # type: ignore[arg-type]
+            phase_errors: list[str] = []
             start_ms = _now_ms()
+            async with adapter:
+                try:
+                    await adapter.setup(ctx)
+                    pre_run_failures = ctx.adapter_state.get("pre_run_failures") or []
+                    if pre_run_failures:
+                        raise RuntimeError("; ".join(str(item) for item in pre_run_failures))
 
-            async with GatewayClient(self.gateway_config) as client:
-                t_phase = _tick("gateway_connect", t_phase)
-                agent_id = await self._create_run_agent(
-                    client,
-                    task=task,
-                    workspace=workspace,
-                    run_index=run_index,
-                )
-                t_phase = _tick("agent_create", t_phase)
-                for phase_index, phase in enumerate(task.normalized_phases()):
-                    session_key = await client.create_session(
-                        model=self.model,
-                        agent_id=agent_id,
-                        label=unique_session_label(
-                            f"clawbench-{task.id}-run{run_index}-phase{phase_index}"
-                        ),
-                    )
-                    session_keys.append(session_key)
-                    await client.subscribe(session_key)
-                    if task.family.value == "browser":
-                        await self._assert_browser_support(client, session_key)
-                    t_phase = _tick(f"phase{phase_index}_session_setup", t_phase)
-
-                    simulator = UserSimulator(
-                        phase.user,
-                        runtime_values,
-                        prompt_variant=self.prompt_variant,
-                    )
-                    turn_index = 0
-                    phase_raw_timeout = float(phase.timeout_seconds or task.timeout_seconds)
-                    turn_timeout = min(phase_raw_timeout, per_turn_cap)
-                    while not simulator.is_done:
-                        # Enforce per-run budget: if we've already burned our whole budget
-                        # on previous turns of this run, bail out and score whatever we have.
+                    for phase in canonical.phases:
                         elapsed = time.monotonic() - t_run_start
-                        if elapsed >= per_run_budget:
-                            logger.warning(
-                                "Run %s/%s hit per-run budget (%.0fs); stopping user simulator",
-                                task.id,
-                                run_index,
-                                per_run_budget,
+                        remaining_budget = per_run_budget - elapsed
+                        if remaining_budget <= 0:
+                            phase_errors.append(
+                                f"Adapter run hit per-run budget ({per_run_budget:.0f}s)"
                             )
                             break
-                        remaining_budget = per_run_budget - elapsed
-                        effective_timeout = min(turn_timeout, remaining_budget)
-
-                        user_message = await simulator.next_message(transcript)
-                        if user_message is None:
+                        try:
+                            phase_result = await asyncio.wait_for(
+                                adapter.run_phase(phase, ctx),
+                                timeout=remaining_budget,
+                            )
+                        except asyncio.TimeoutError:
+                            phase_errors.append(
+                                f"Adapter run hit per-run budget ({per_run_budget:.0f}s)"
+                            )
                             break
-                        t_turn_start = time.monotonic()
-                        phase_transcript = await client.send_and_wait(
-                            session_key,
-                            user_message,
-                            timeout=effective_timeout,
-                        )
-                        timings[f"phase{phase_index}_turn{turn_index}"] = round(
-                            time.monotonic() - t_turn_start, 2
-                        )
-                        transcript.messages.extend(phase_transcript.messages)
-                        turn_index += 1
-                    t_phase = _tick(f"phase{phase_index}_total", t_phase)
+                        if phase_result.error:
+                            phase_errors.append(phase_result.error)
+                            break
 
-                duration_ms = _now_ms() - start_ms
-                last_session_key = session_keys[-1] if session_keys else ""
-                t_score_start = time.monotonic()
-                result = await score_task_run(
-                    task=task,
-                    transcript=transcript,
-                    workspace=workspace,
-                    client=client,
-                    session_key=last_session_key,
-                    agent_id=agent_id,
-                    duration_ms=duration_ms,
-                    runtime_values=runtime_values,
-                    judge_model=self.judge_model,
-                )
-                timings["score"] = round(time.monotonic() - t_score_start, 2)
-                timings["total"] = round(time.monotonic() - t_run_start, 2)
-                result.run_index = run_index
+                    duration_ms = _now_ms() - start_ms
+                    result = await self._score_adapter_task_run(
+                        task=task,
+                        canonical_task=canonical,
+                        ctx=ctx,
+                        duration_ms=duration_ms,
+                        adapter=adapter,
+                        error="; ".join(phase_errors) if phase_errors else None,
+                    )
+                finally:
+                    await adapter.teardown(ctx)
+            result.run_index = run_index
 
-                # Write per-run cache so a future resume of this job can skip this run.
-                if cache_path is not None:
-                    try:
-                        cache_path.parent.mkdir(parents=True, exist_ok=True)
-                        tmp_path = cache_path.with_suffix(".json.tmp")
-                        tmp_path.write_text(
-                            result.model_dump_json(indent=2), encoding="utf-8"
-                        )
-                        tmp_path.replace(cache_path)
-                    except Exception as exc:
-                        logger.warning("Cache write failed for %s/run%s: %s", task.id, run_index, exc)
-
-                logger.info(
-                    "TIMING %s/run%s total=%.1fs score=%.2f C=%.2f T=%.2f B=%.2f J=%.2f  %s",
-                    task.id,
-                    run_index,
-                    timings["total"],
-                    result.run_score,
-                    result.completion_result.score,
-                    result.trajectory_result.score,
-                    result.behavior_result.score,
-                    result.judge_result.score if (result.judge_result.enabled and not result.judge_result.error) else 0.0,
-                    " ".join(f"{k}={v}s" for k, v in timings.items() if k != "total"),
-                )
-                return result
+            if cache_path is not None:
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    tmp_path = cache_path.with_suffix(".json.tmp")
+                    tmp_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+                    tmp_path.replace(cache_path)
+                except Exception as exc:
+                    logger.warning("Adapter cache write failed for %s/run%s: %s", task.id, run_index, exc)
+            return result
         except Exception as exc:
-            logger.exception("Run %s/%s failed", task.id, run_index)
+            logger.exception("Adapter run %s/%s failed", task.id, run_index)
             return TaskRunResult(
                 task_id=task.id,
                 tier=task.tier.value,
@@ -461,29 +548,170 @@ class BenchmarkHarness:
                 privacy_tier=task.privacy_tier,
                 contamination_risk=task.contamination_risk,
                 freshness_epoch=task.freshness_epoch,
+                category=task.category,
+                domain=task.domain,
+                functionality=list(task.functionality),
+                trace_distribution=list(task.trace_distribution),
+                tool_surface=list(task.tool_surface),
+                risk_tags=list(task.risk_tags),
                 similarity_hash=task.similarity_hash,
                 official=task.official,
                 run_index=run_index,
                 run_score=0.0,
-                transcript=Transcript(),
-                duration_ms=0,
+                transcript=transcript,
+                duration_ms=round((time.monotonic() - t_run_start) * 1000),
                 delivery_outcome=DeliveryOutcome.FAIL,
                 failure_mode=classify_error_failure_mode(task, str(exc)),
                 error=str(exc),
             )
         finally:
             await stop_background_services(services)
-            if session_keys or agent_id:
-                try:
-                    async with GatewayClient(self.gateway_config) as cleanup_client:
-                        for session_key in session_keys:
-                            await cleanup_client.delete_session(session_key)
-                        if agent_id:
-                            await cleanup_client.delete_agent(agent_id, delete_files=False)
-                except Exception as exc:
-                    logger.warning("Session cleanup failed: %s", exc)
             if os.environ.get("CLAWBENCH_KEEP_WORKSPACES") != "1":
                 shutil.rmtree(workspace, ignore_errors=True)
+
+    async def _score_adapter_task_run(
+        self,
+        *,
+        task: TaskDefinition,
+        canonical_task,
+        ctx: AdapterContext,
+        duration_ms: int,
+        adapter,
+        error: str | None,
+    ) -> TaskRunResult:
+        annotate_transcript_tool_calls(ctx.transcript)
+
+        total = 0
+        passed = 0
+        failures: list[str] = []
+        execution_results = []
+
+        for spec in canonical_task.verifier.file_states:
+            ok, reason = verify_file_state(spec, ctx.workspace, ctx.runtime_values)
+            total += 1
+            if ok:
+                passed += 1
+            else:
+                failures.append(f"FILE {spec.path}: {reason}")
+
+        for query in canonical_task.verifier.state_queries:
+            state = await adapter.verify_state_query(query, ctx)
+            if state.capability_missing:
+                failures.append(f"SKIP {query.kind}: {state.detail}")
+                continue
+            total += 1
+            if state.ok:
+                passed += 1
+            else:
+                failures.append(f"{query.kind.upper()}: {state.detail or query.description}")
+
+        for spec in canonical_task.verifier.execution_checks:
+            result = await run_execution_check(
+                spec,
+                workspace=ctx.workspace,
+                runtime_values=ctx.runtime_values,
+            )
+            execution_results.append(result)
+            total += 1
+            if result.passed:
+                passed += 1
+            else:
+                failures.append(f"EXEC {spec.name}: {result.reason}")
+
+        completion_result = CompletionResult(
+            total_assertions=total,
+            passed_assertions=passed,
+            failed_assertions=failures,
+            execution_results=execution_results,
+            score=round(passed / total if total else 1.0, 4),
+        )
+        trajectory_result = evaluate_trajectory(ctx.transcript, canonical_task.verifier.trajectory)
+        behavior_result = evaluate_behavior(canonical_task.verifier.behavior, ctx.transcript)
+        if self.judge_model:
+            async with GatewayClient(self.gateway_config) as judge_client:
+                judge_result = await judge_task_run(
+                    task=task,
+                    transcript=ctx.transcript,
+                    workspace=ctx.workspace,
+                    client=judge_client,
+                    judge_model=self.judge_model,
+                    completion_result=completion_result,
+                )
+        else:
+            judge_result = JudgeResult()
+        token_usage = ctx.transcript.total_usage
+        efficiency_result = EfficiencyResult.from_usage(
+            duration_ms=duration_ms,
+            usage=token_usage,
+        )
+        run_score = combine_run_score(
+            completion=completion_result.score,
+            trajectory=trajectory_result.score,
+            behavior=behavior_result.score,
+            judge=(
+                judge_result.score
+                if judge_result.enabled and not judge_result.error
+                else None
+            ),
+            has_deterministic_verifier=completion_result.total_assertions > 0,
+        )
+        delivery_outcome = classify_delivery_outcome(
+            task=task,
+            completion_result=completion_result,
+            run_score=run_score,
+        )
+        failure_mode = classify_failure_mode(
+            task=task,
+            transcript=ctx.transcript,
+            completion_result=completion_result,
+            trajectory_result=trajectory_result,
+            behavior_result=behavior_result,
+            error=error,
+        )
+
+        return TaskRunResult(
+            task_id=task.id,
+            tier=task.tier.value,
+            family=task.family.value,
+            scenario=task.scenario.value if task.scenario else "",
+            subscenario=task.subscenario,
+            artifact_type=task.artifact_type.value if task.artifact_type else "",
+            prompt_variant=self.prompt_variant,
+            query_difficulty=task.query_difficulty.value if task.query_difficulty else "",
+            query_weight=task.query_weight,
+            pool=task.pool.value,
+            subsets=[subset.value for subset in task.subsets],
+            capabilities=[capability.value for capability in task.capabilities],
+            variant_group=task.variant_group,
+            variant_id=task.variant_id,
+            template_id=task.template_id,
+            release_id=task.release_id,
+            source_kind=task.source_kind,
+            privacy_tier=task.privacy_tier,
+            contamination_risk=task.contamination_risk,
+            freshness_epoch=task.freshness_epoch,
+            category=task.category,
+            domain=task.domain,
+            functionality=list(task.functionality),
+            trace_distribution=list(task.trace_distribution),
+            tool_surface=list(task.tool_surface),
+            risk_tags=list(task.risk_tags),
+            similarity_hash=task.similarity_hash,
+            official=task.official,
+            run_index=0,
+            completion_result=completion_result,
+            trajectory_result=trajectory_result,
+            behavior_result=behavior_result,
+            judge_result=judge_result,
+            run_score=round(run_score, 4),
+            transcript=ctx.transcript,
+            duration_ms=duration_ms,
+            token_usage=token_usage,
+            efficiency_result=efficiency_result,
+            delivery_outcome=delivery_outcome,
+            failure_mode=failure_mode,
+            error=error,
+        )
 
     async def _create_run_agent(
         self,
@@ -606,6 +834,12 @@ class BenchmarkHarness:
                     privacy_tier=task.privacy_tier,
                     contamination_risk=task.contamination_risk,
                     freshness_epoch=task.freshness_epoch,
+                    category=task.category,
+                    domain=task.domain,
+                    functionality=list(task.functionality),
+                    trace_distribution=list(task.trace_distribution),
+                    tool_surface=list(task.tool_surface),
+                    risk_tags=list(task.risk_tags),
                     similarity_hash=task.similarity_hash,
                     official=task.official,
                     runs=len(runs),
@@ -712,6 +946,45 @@ class BenchmarkHarness:
                 )
             )
 
+        category_results = _dimension_results(
+            task_stats,
+            dimension="category",
+            values_for=lambda stat: [stat.category] if stat.category else [],
+        )
+        domain_results = _dimension_results(
+            task_stats,
+            dimension="domain",
+            values_for=lambda stat: [stat.domain] if stat.domain else [],
+        )
+        functionality_results = _dimension_results(
+            task_stats,
+            dimension="functionality",
+            values_for=lambda stat: stat.functionality,
+        )
+        trace_distribution_results = _dimension_results(
+            task_stats,
+            dimension="trace_distribution",
+            values_for=lambda stat: stat.trace_distribution,
+        )
+        tool_surface_results = _dimension_results(
+            task_stats,
+            dimension="tool_surface",
+            values_for=lambda stat: stat.tool_surface,
+        )
+        risk_tag_results = _dimension_results(
+            task_stats,
+            dimension="risk_tag",
+            values_for=lambda stat: stat.risk_tags,
+        )
+        dimension_results = {
+            "category": category_results,
+            "domain": domain_results,
+            "functionality": functionality_results,
+            "trace_distribution": trace_distribution_results,
+            "tool_surface": tool_surface_results,
+            "risk_tag": risk_tag_results,
+        }
+
         overall_ci = bootstrap_ci([stat.mean_task_score for stat in task_stats])
         total_weight = sum(stat.query_weight for stat in task_stats)
         overall_failure_mode_counts = _count_values(
@@ -727,6 +1000,7 @@ class BenchmarkHarness:
             for _ in range(count)
         )
         active_release = load_active_release()
+        ablation_profile = self._ablation_profile()
         result = BenchmarkResult(
             submission_id=str(uuid.uuid4()),
             model=self.model,
@@ -743,10 +1017,17 @@ class BenchmarkHarness:
                 "prompt_variant": self.prompt_variant,
                 "judge_model": self.judge_model,
                 "adapter": self.adapter,
+                "ablation_profile": ablation_profile.model_dump(),
+                "tool_profile": ablation_profile.tool_profile.model_dump(),
+                "harness": ablation_profile.harness.model_dump(),
                 "known_adapters": list(KNOWN_ADAPTERS),
                 "executable_adapters": sorted(EXECUTABLE_ADAPTERS),
                 "subsets": self.subsets,
                 "capabilities": self.capabilities,
+                "dimension_coverage": {
+                    key: len(value)
+                    for key, value in dimension_results.items()
+                },
                 "official_only": self.official_only,
                 **(environment_extra or {}),
             },
@@ -803,6 +1084,13 @@ class BenchmarkHarness:
             overall_pass_hat_k=_mean([1.0 if stat.pass_hat_k else 0.0 for stat in task_stats]),
             tier_results=tier_results,
             scenario_results=scenario_results,
+            category_results=category_results,
+            domain_results=domain_results,
+            functionality_results=functionality_results,
+            trace_distribution_results=trace_distribution_results,
+            tool_surface_results=tool_surface_results,
+            risk_tag_results=risk_tag_results,
+            dimension_results=dimension_results,
             task_results=task_stats,
             environment_checksum=self._benchmark_checksum(tasks),
             task_snapshot_fingerprint=compute_task_snapshot_fingerprint(tasks),
@@ -822,6 +1110,48 @@ class BenchmarkHarness:
         else:
             completion_passed = completion.score >= 0.9999
         return completion_passed and result.run_score >= task.pass_threshold
+
+    def _ablation_profile(self):
+        config = self._adapter_config()
+        driver = ""
+        enabled_toolsets: list[str] = []
+        disabled_toolsets: list[str] = []
+        if isinstance(config, HermesAdapterConfig):
+            driver = config.driver_mode
+            enabled_toolsets = list(config.enabled_toolsets or [])
+            disabled_toolsets = list(config.disabled_toolsets or [])
+        elif isinstance(config, OpenClawAdapterConfig):
+            driver = "gateway"
+
+        source = ""
+        sha = ""
+        version = ""
+        if self.adapter == "hermes":
+            repo = os.environ.get("HERMES_AGENT_REPO") or os.environ.get("HERMES_INSTALL_DIR")
+            if repo:
+                source = str(Path(repo).expanduser())
+                sha, version = git_head(Path(source))
+        elif self.adapter == "openclaw":
+            candidate = Path(os.environ.get("OPENCLAW_REPO", self.repo_root.parent / "openclaw"))
+            if candidate.exists():
+                source = str(candidate)
+                sha, version = git_head(candidate)
+            if not version:
+                version = _command_version(["openclaw", "--version"])
+
+        return build_ablation_profile(
+            model=self.model,
+            adapter=self.adapter,
+            config=config,  # type: ignore[arg-type]
+            prompt_profile=self.prompt_variant,
+            harness_version=version,
+            harness_git_sha=sha,
+            harness_source=source,
+            driver=driver,
+            tool_profile_name=self.tool_profile_name,
+            enabled_toolsets=enabled_toolsets,
+            disabled_toolsets=disabled_toolsets,
+        )
 
     def _print_report(self, result: BenchmarkResult) -> None:
         console.print(f"\n[bold]{'=' * 60}[/]")
@@ -907,6 +1237,47 @@ class BenchmarkHarness:
 
 def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
+
+
+def _dimension_results(
+    task_stats: list[TaskStats],
+    *,
+    dimension: str,
+    values_for: Callable[[TaskStats], list[str]],
+) -> list[DimensionResult]:
+    grouped: dict[str, list[TaskStats]] = {}
+    for stat in task_stats:
+        values = sorted({value.strip() for value in values_for(stat) if value.strip()})
+        for value in values:
+            grouped.setdefault(value, []).append(stat)
+
+    results: list[DimensionResult] = []
+    for value in sorted(grouped):
+        current = grouped[value]
+        total_weight = sum(stat.query_weight for stat in current)
+        weighted_score = (
+            sum(stat.mean_task_score * stat.query_weight for stat in current) / total_weight
+            if total_weight
+            else _mean([stat.mean_task_score for stat in current])
+        )
+        results.append(
+            DimensionResult(
+                dimension=dimension,
+                value=value,
+                mean_task_score=_mean([stat.mean_task_score for stat in current]),
+                weighted_score=weighted_score,
+                mean_completion=_mean([stat.mean_completion_score for stat in current]),
+                mean_trajectory=_mean([stat.mean_trajectory_score for stat in current]),
+                mean_behavior=_mean([stat.mean_behavior_score for stat in current]),
+                mean_judge=_mean([stat.mean_judge_score for stat in current if stat.judged_runs > 0]),
+                mean_reliability=_mean([stat.reliability_score for stat in current]),
+                pass_hat_k_rate=_mean([1.0 if stat.pass_hat_k else 0.0 for stat in current]),
+                task_count=len(current),
+                total_weight=total_weight,
+                task_ids=[stat.task_id for stat in current],
+            )
+        )
+    return results
 
 
 def _percentile(values: list[float], percentile: float) -> float:

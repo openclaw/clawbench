@@ -46,9 +46,16 @@ def cli(verbose: bool) -> None:
     type=click.Choice(KNOWN_ADAPTERS),
     default="openclaw",
     show_default=True,
-    help="Agent harness adapter. OpenClaw is executable today; other adapters are tracked targets.",
+    help="Agent harness adapter. OpenClaw uses the gateway; Hermes runs hermes-agent locally.",
 )
 @click.option("--gateway-token", envvar="OPENCLAW_GATEWAY_TOKEN", default="", help="Gateway auth token")
+@click.option(
+    "--gateway-url",
+    envvar="OPENCLAW_GATEWAY_URL",
+    default="ws://localhost:18789",
+    show_default=True,
+    help="OpenClaw gateway websocket URL",
+)
 @click.option(
     "--judge-model",
     envvar="CLAWBENCH_JUDGE_MODEL",
@@ -117,6 +124,11 @@ def cli(verbose: bool) -> None:
          "the run is recorded in the historical profile database.",
 )
 @click.option(
+    "--tool-profile",
+    default=None,
+    help="Optional label for the tool/profile axis recorded in result metadata.",
+)
+@click.option(
     "--insights-dir",
     type=click.Path(path_type=Path),
     default=Path(".clawbench/insights"),
@@ -132,6 +144,7 @@ def run(
     model: str,
     adapter: str,
     gateway_token: str,
+    gateway_url: str,
     judge_model: str,
     runs: int,
     tier: str | None,
@@ -149,10 +162,11 @@ def run(
     concurrency: int,
     browser_concurrency: int,
     profile: Path | None,
+    tool_profile: str | None,
     insights_dir: Path,
     dynamics: bool,
 ) -> None:
-    gateway_config = GatewayConfig(token=gateway_token)
+    gateway_config = GatewayConfig(url=gateway_url, token=gateway_token)
     harness = BenchmarkHarness(
         gateway_config=gateway_config,
         model=model,
@@ -171,6 +185,7 @@ def run(
         randomize_order=not no_randomize,
         concurrency=concurrency,
         browser_concurrency=browser_concurrency,
+        tool_profile_name=tool_profile,
     )
 
     result = asyncio.run(harness.run())
@@ -196,6 +211,40 @@ def run(
         from clawbench.upload import upload_result
 
         asyncio.run(upload_result(result))
+
+
+@cli.command("compare-results")
+@click.argument("results", nargs=-1, type=click.Path(exists=True, path_type=Path), required=True)
+@click.option("--json-out", is_flag=True, help="Print machine-readable comparison JSON.")
+def compare_results_cmd(results: tuple[Path, ...], json_out: bool) -> None:
+    """Compare BenchmarkResult JSON files with fairness checks."""
+    from clawbench.ablation import compare_results
+    from clawbench.schemas import BenchmarkResult
+
+    loaded: dict[str, BenchmarkResult] = {}
+    for path in results:
+        with path.open(encoding="utf-8") as handle:
+            loaded[path.stem] = BenchmarkResult(**json.load(handle))
+    comparison = compare_results(loaded)
+    if json_out:
+        click.echo(json.dumps(comparison, indent=2, default=str))
+        return
+
+    click.echo(f"Task/verifier fair: {comparison['task_verifier_fair']}")
+    click.echo(f"Controlled ablation: {comparison['controlled_ablation']}")
+    click.echo(f"Same model: {comparison['same_model']}")
+    click.echo(f"Same task set: {comparison['same_task_set']}")
+    click.echo(f"Same task snapshot: {comparison['same_task_snapshot']}")
+    click.echo(f"Same prompt variant: {comparison['same_prompt_variant']}")
+    for label, row in comparison["rows"].items():
+        click.echo(
+            f"{label}: model={row['model']} adapter={row['adapter']} "
+            f"tasks={row['task_count']} score={row['score']:.3f} "
+            f"C={row['completion']:.3f} T={row['trajectory']:.3f} "
+            f"B={row['behavior']:.3f} R={row['reliability']:.3f}"
+        )
+    for label, delta in comparison["deltas"].items():
+        click.echo(f"{label}: {delta:+.3f}")
 
 
 @cli.command("dynamics-report")
@@ -796,6 +845,20 @@ def show(result_file: str) -> None:
         f"Consensus subset: {result.consensus_subset_score:.3f}"
     )
     console.print(f"  [bold]pass^k reliability: {result.overall_pass_hat_k:.0%}[/]\n")
+
+    for label, dimension_items in (
+        ("Category", result.category_results),
+        ("Domain", result.domain_results),
+    ):
+        if not dimension_items:
+            continue
+        summary = ", ".join(
+            f"{item.value}={item.weighted_score:.3f}"
+            for item in sorted(dimension_items, key=lambda item: item.value)
+        )
+        console.print(f"  [bold]{label}:[/] {summary}")
+    if result.category_results or result.domain_results:
+        console.print()
 
     for task in result.task_results:
         color = "green" if task.mean_task_score >= 0.7 else "yellow" if task.mean_task_score >= 0.4 else "red"

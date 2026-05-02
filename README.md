@@ -17,7 +17,7 @@ license: mit
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB.svg?style=flat-square)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
-[![Core v1: 19 tasks](https://img.shields.io/badge/Core%20v1-19%20tasks-blue.svg?style=flat-square)](tasks-public/)
+[![Core v1: 27 tasks](https://img.shields.io/badge/Core%20v1-27%20tasks-blue.svg?style=flat-square)](tasks-public/)
 [![Diagnostics](https://img.shields.io/badge/diagnostics-dynamical-blueviolet.svg?style=flat-square)](#3-dynamical-systems-diagnostics-how-agents-fail-not-just-whether)
 [![HF Dataset](https://img.shields.io/badge/HF-dataset-yellow.svg?style=flat-square)](https://huggingface.co/datasets/openclaw/clawbench-results)
 
@@ -31,7 +31,7 @@ A reproducibility-first public release of the benchmark, informed by a full 8-mo
 
 | Innovation | What it means | Why it matters |
 |---|---|---|
-| **Signal-curated task set** | 19 tasks selected from 40-task dev pool by greedy SNR-preserving elimination | Drops tasks where seed noise exceeds capability signal (21 such tasks exist in the raw 40) |
+| **Signal-curated task set** | 27 tasks from a 48-task dev pool: 19 selected by greedy SNR-preserving elimination plus 8 memory/perceived-harness probes | Keeps the stable ranking core while adding tasks for saved preferences, project knowledge, stale correction, relationship recall, timeline synthesis, semantic routing, durable writeback, and contradiction handling |
 | **Variance decomposition** | Measures and reports seed-noise vs capability-signal ratio per task | **47% of 40-task variance is seed noise** — we quantify it; most benchmarks hide it |
 | **Dynamical-systems diagnostics** | Per-run regime classification (trapped / limit-cycle / diffusive / mixed) | Reveals *how* agents fail, not just whether. Inspired by Markov-kernel / attractor-basin framework |
 | **Constraint Index C(q)** | Principled task-weighting via participation ratio + entropy + Bayes prediction | Distinguishes "everyone converges" from "everyone diverges" tasks — enables honest weighted ranking |
@@ -235,22 +235,26 @@ These are surfaced per-run in the result, not hidden in logs. They make failures
 
 ---
 
-## Core v1 task suite: 19 tasks
+## Core v1 task suite: 27 tasks
 
-Core v1 is a signal-curated public release of 19 tasks from the internal 40-task dev pool. Selected for:
+Core v1 is a signal-curated public release of 27 tasks from the internal 48-task dev pool. Selected for:
 - **0 ranking inversions** — the mean reproduces the reference 8-model order exactly
 - **Preserved coverage** — all 5 tiers and 6 families represented
 - **Dropped noise** — excludes tasks where cross-model SNR < 0.5
+- **Harness-visible memory behavior** — includes saved preferences, project knowledge recall, stale-context correction, relationship recall, timeline synthesis, semantic alias routing, durable writeback, and contradiction handling
+- **Orthogonal leaderboard slices** — every task declares `category`, `domain`, `functionality`, `trace_distribution`, `tool_surface`, and `risk_tags`, and result JSON reports aggregate scores for each axis without nesting them under a product-specific harness
 
 | Tier | Core v1 count | What it tests | Examples |
 |------|:---:|---|---|
 | **Tier 1** | 2 | Single-tool basics | Bugfix discount calc, quick file note |
 | **Tier 2** | 6 | Multi-step, 2-3 tools | Config loader repair, browser form fix, priv redaction |
-| **Tier 3** | 5 | Complex orchestration | SQL query analysis, inbox triage, data pipeline report |
-| **Tier 4** | 5 | Cross-system reasoning | Cross-repo migration, delegation repair, memory continuation, browser research+code |
-| **Tier 5** | 1 | Adversarial | Hallucination-resistant evidence |
+| **Tier 3** | 6 | Complex orchestration | SQL query analysis, inbox triage, personalized memory brief |
+| **Tier 4** | 11 | Cross-system reasoning | Cross-repo migration, delegation repair, project memory, stale-memory correction, timeline and relationship recall |
+| **Tier 5** | 2 | Adversarial | Hallucination-resistant evidence, contradictory memory ledger |
 
 Full manifest: [`tasks-public/MANIFEST.yaml`](tasks-public/MANIFEST.yaml).
+
+Benchmark results include both the traditional tier/scenario summaries and a flat `dimension_results` map keyed by those task axes. That lets third-party harnesses compare the same task/verifier set by trace mix, domain, functionality, and tool surface while keeping the headline score independent of any one agent stack.
 
 ### Task design principles
 
@@ -363,7 +367,7 @@ docker run --rm --entrypoint openclaw clawbench --version
 ```bash
 export OPENCLAW_GATEWAY_TOKEN=<your-token>
 
-# Core v1 = 19 specific tasks. List them via the manifest:
+# Core v1 = 27 specific tasks. List them via the manifest:
 python3 -c "import yaml; m = yaml.safe_load(open('tasks-public/MANIFEST.yaml'));
              print(' '.join(f'-t {t[\"id\"]}' for t in m['tasks']))"
 
@@ -380,10 +384,11 @@ clawbench run \
   -t t2-msg-summarize-thread -t t2-priv-redact-doc \
   -t t3-data-pipeline-report -t t3-data-sql-query \
   -t t3-feature-export -t t3-msg-inbox-triage \
-  -t t3-web-research-and-cite \
+  -t t3-memory-personalized-brief -t t3-web-research-and-cite \
   -t t4-browser-research-and-code -t t4-cross-repo-migration \
   -t t4-delegation-repair -t t4-life-trip-plan \
-  -t t4-memory-recall-continuation \
+  -t t4-memory-recall-continuation -t t4-memory-project-kb \
+  -t t4-memory-stale-correction \
   -t t5-hallucination-resistant-evidence \
   -o results/opus46_core_v1.json
 ```
@@ -394,6 +399,10 @@ clawbench run \
 # Fair-comparison audit
 python3 scripts/audit_runs.py
 python3 scripts/generate_fair_report.py --tag v2026-4-19-full
+
+# Compare two result JSONs. This reports task/verifier fairness
+# separately from controlled same-model ablations.
+clawbench compare-results results/agent_a.json results/agent_b.json
 
 # Posterior dynamics + ranking from cached per-run JSONs
 python3 scripts/run_posterior_dynamics_pipeline.py \
@@ -497,13 +506,13 @@ clawbench/
 │   ├── dynamics_plots.py           # Offline dynamics visualizations
 │   └── cli.py                      # CLI entry points
 │
-├── tasks-public/                   # Core v1 PUBLIC release (19 tasks)
+├── tasks-public/                   # Core v1 PUBLIC release (27 tasks)
 │   ├── MANIFEST.yaml               # Task list + reference ranking + metadata
 │   ├── README.md                   # Rationale, build + run instructions
-│   ├── tier1/ ... tier5/           # 19 task YAMLs with verification specs
-│   └── assets/                     # 19 asset packs (verifiers + fixtures)
+│   ├── tier1/ ... tier5/           # 27 task YAMLs with verification specs
+│   └── assets/                     # 27 asset packs (verifiers + fixtures)
 │
-├── tasks/                          # PRIVATE 40-task dev pool (gitignored)
+├── tasks/                          # PRIVATE 48-task dev pool (gitignored)
 │
 ├── scripts/                        # Reproducibility + analysis pipeline
 │   ├── container_sweep_single.sh   # Per-container OPENCLAW_STATE_DIR isolation
@@ -565,7 +574,7 @@ Key test invariants:
 
 | Version | Date | Summary |
 |:---:|---|---|
-| **Core v1** | 2026-04-20 | 19-task signal-curated public release; dynamical-systems diagnostics (C(q), regimes, survival, SNR-weighted); per-container state isolation; rejudge pipeline |
+| **Core v1** | 2026-04-20 | 27-task signal-curated public release with memory/perceived-harness probes; dynamical-systems diagnostics (C(q), regimes, survival, SNR-weighted); per-container state isolation; rejudge pipeline |
 | v0.5 | earlier | Configuration Diagnostic (fingerprint, predict, fANOVA); plugin-native ablation |
 | v0.4 | earlier | 4-axis scoring with gated judge; 13-mode failure taxonomy; Partner Trace Spec |
 

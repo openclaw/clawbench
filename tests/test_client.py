@@ -106,7 +106,7 @@ async def test_gateway_client_retries_transient_drain_errors(monkeypatch: pytest
     async def fake_wait_event(self, event_name: str, *, timeout: float):
         return {"payload": {"nonce": ""}}
 
-    async def fake_rpc(self, method: str, params=None):
+    async def fake_rpc(self, method: str, params=None, **kwargs):
         return {"payload": {"type": "hello-ok", "protocol": 3}}
 
     async def fake_listener(self):
@@ -143,7 +143,7 @@ async def test_gateway_client_retries_half_closed_handshake_errors(
     async def fake_wait_event(self, event_name: str, *, timeout: float):
         return {"payload": {"nonce": ""}}
 
-    async def fake_rpc(self, method: str, params=None):
+    async def fake_rpc(self, method: str, params=None, **kwargs):
         return {"payload": {"type": "hello-ok", "protocol": 3}}
 
     async def fake_listener(self):
@@ -192,3 +192,71 @@ async def test_send_and_wait_collects_messages_that_arrive_after_final_state():
     transcript = await client.send_and_wait(session_key, "hello", timeout=1.0)
 
     assert [message.text for message in transcript.assistant_messages] == ["Late but valid."]
+
+
+@pytest.mark.asyncio
+async def test_send_and_wait_passes_gateway_timeout_and_waits_for_run():
+    client = GatewayClient(GatewayConfig(request_timeout=1))
+    session_key = "session-1"
+    calls: list[tuple[str, dict | None, dict]] = []
+
+    async def fake_rpc(method: str, params=None, **kwargs):
+        calls.append((method, params, kwargs))
+        if method == "sessions.send":
+            return {"ok": True, "payload": {"runId": "run-1"}}
+        if method == "agent.wait":
+            return {"ok": True, "payload": {"runId": "run-1", "status": "completed"}}
+        if method == "sessions.get":
+            return {
+                "ok": True,
+                "payload": {
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "Done."}],
+                        }
+                    ]
+                },
+            }
+        return {"ok": True, "payload": {}}
+
+    client._rpc = fake_rpc  # type: ignore[method-assign]
+
+    transcript = await client.send_and_wait(session_key, "hello", timeout=1.5)
+
+    send_call = next(call for call in calls if call[0] == "sessions.send")
+    assert send_call[1] == {
+        "key": session_key,
+        "message": "hello",
+        "idempotencyKey": send_call[1]["idempotencyKey"],
+        "timeoutMs": 1500,
+    }
+    wait_call = next(call for call in calls if call[0] == "agent.wait")
+    assert wait_call[1] == {"runId": "run-1", "timeoutMs": 1500}
+    assert wait_call[2]["timeout"] == 11.5
+    assert [message.text for message in transcript.assistant_messages] == ["Done."]
+
+
+@pytest.mark.asyncio
+async def test_send_and_wait_aborts_run_when_no_terminal_state_arrives():
+    client = GatewayClient(GatewayConfig(request_timeout=1))
+    session_key = "session-1"
+    calls: list[tuple[str, dict | None, dict]] = []
+
+    async def fake_rpc(method: str, params=None, **kwargs):
+        calls.append((method, params, kwargs))
+        if method == "sessions.send":
+            return {"ok": True, "payload": {"runId": "run-timeout"}}
+        if method == "agent.wait":
+            await asyncio.sleep(60)
+        if method == "sessions.abort":
+            return {"ok": True, "payload": {"status": "aborted"}}
+        if method == "sessions.get":
+            return {"ok": True, "payload": {"messages": []}}
+        return {"ok": True, "payload": {}}
+
+    client._rpc = fake_rpc  # type: ignore[method-assign]
+
+    await client.send_and_wait(session_key, "hello", timeout=0.01)
+
+    assert ("sessions.abort", {"key": session_key, "runId": "run-timeout"}, {"timeout": 1}) in calls

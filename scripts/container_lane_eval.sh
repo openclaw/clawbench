@@ -1,0 +1,220 @@
+#!/bin/bash
+# Run one OpenClaw model/profile through the HF-style isolated lane worker.
+set -Eeuo pipefail
+
+: "${SWEEP_MODEL:?SWEEP_MODEL required}"
+: "${SWEEP_LABEL:?SWEEP_LABEL required}"
+: "${SWEEP_OUT_TAG:=lane-container}"
+: "${SWEEP_LANES:=3}"
+: "${SWEEP_RUNS:=1}"
+: "${SWEEP_LOGDIR:=/data/results}"
+: "${CLAWBENCH_PER_RUN_BUDGET_SECONDS:=900}"
+: "${CLAWBENCH_PER_TURN_TIMEOUT_SECONDS:=300}"
+: "${OPENCLAW_EXEC_HOST:=gateway}"
+
+cd /home/node/app
+export CLAWBENCH_LOCAL_QUEUE_DIR="${CLAWBENCH_LOCAL_QUEUE_DIR:-/data/queue/$SWEEP_LABEL}"
+mkdir -p "$SWEEP_LOGDIR" /data/results "$CLAWBENCH_LOCAL_QUEUE_DIR" /data/run_cache /data/lane_runtime
+
+export HF_TOKEN=""
+export OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-local-dev-token-for-testing}"
+export OPENCLAW_SKIP_GMAIL_WATCHER=1
+export OPENCLAW_SKIP_CANVAS_HOST=1
+export OPENCLAW_NO_RESPAWN=1
+export CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY=1
+export CLAWBENCH_PER_RUN_BUDGET_SECONDS
+export CLAWBENCH_PER_TURN_TIMEOUT_SECONDS
+export CLAWBENCH_CONNECT_TIMEOUT="${CLAWBENCH_CONNECT_TIMEOUT:-180}"
+export CLAWBENCH_REQUEST_TIMEOUT="${CLAWBENCH_REQUEST_TIMEOUT:-300}"
+export CLAWBENCH_GATEWAY_HEALTH_TIMEOUT_SECONDS="${CLAWBENCH_GATEWAY_HEALTH_TIMEOUT_SECONDS:-240}"
+export CLAWBENCH_LANE_STARTUP_STAGGER_SECONDS="${CLAWBENCH_LANE_STARTUP_STAGGER_SECONDS:-90}"
+export CLAWBENCH_GATEWAY_READY_MARKER_GRACE_SECONDS="${CLAWBENCH_GATEWAY_READY_MARKER_GRACE_SECONDS:-90}"
+export CLAWBENCH_KEEP_PARALLEL_LANE_ROOT="${CLAWBENCH_KEEP_PARALLEL_LANE_ROOT:-0}"
+export CLAWBENCH_PARALLEL_LANE_ROOT="/data/lane_runtime/$SWEEP_LABEL"
+export CLAWBENCH_TOOL_PROFILE_NAME="${CLAWBENCH_TOOL_PROFILE_NAME:-$SWEEP_LABEL}"
+export NODE_OPTIONS="${NODE_OPTIONS:-"--max-old-space-size=4096"}"
+if command -v npm >/dev/null 2>&1; then
+  export NODE_PATH="${NODE_PATH:-$(npm root -g 2>/dev/null || true)}"
+fi
+
+SRC_STATE="${OPENCLAW_CONFIG_SOURCE:-/config/openclaw}"
+if [ ! -d "$SRC_STATE" ]; then
+  SRC_STATE="/home/node/.openclaw"
+fi
+
+safe_model="${SWEEP_MODEL//\//_}"
+safe_model="${safe_model//:/_}"
+OUT="$SWEEP_LOGDIR/${SWEEP_LABEL}_openclaw_${safe_model}_${SWEEP_OUT_TAG}.json"
+LOG="$SWEEP_LOGDIR/${SWEEP_LABEL}_openclaw_${safe_model}_${SWEEP_OUT_TAG}.log"
+export SWEEP_OUTPUT_PATH="$OUT"
+
+FRESH_HOME="/tmp/openclaw-home-${SWEEP_LABEL}-$$"
+FRESH_STATE="$FRESH_HOME/.openclaw"
+rm -rf "$FRESH_HOME" "$CLAWBENCH_PARALLEL_LANE_ROOT"
+mkdir -p "$FRESH_STATE" "$FRESH_HOME/.config"
+if [ -f "$SRC_STATE/openclaw.json" ]; then
+  cp "$SRC_STATE/openclaw.json" "$FRESH_STATE/openclaw.json"
+fi
+if [ -d "$SRC_STATE/plugins" ]; then
+  mkdir -p "$FRESH_STATE/plugins"
+  cp -R "$SRC_STATE/plugins/." "$FRESH_STATE/plugins/" 2>/dev/null || true
+fi
+mkdir -p \
+  "$FRESH_STATE/agents" \
+  "$FRESH_STATE/workspace" \
+  "$FRESH_STATE/logs" \
+  "$FRESH_STATE/memory" \
+  "$FRESH_STATE/cache" \
+  "$FRESH_STATE/identity" \
+  "$FRESH_STATE/devices" \
+  "$FRESH_STATE/tasks" \
+  "$FRESH_STATE/subagents" \
+  "$FRESH_STATE/flows" \
+  "$FRESH_STATE/cron"
+
+export HOME="$FRESH_HOME"
+export OPENCLAW_HOME="$FRESH_HOME"
+export OPENCLAW_STATE_DIR="$FRESH_STATE"
+export OPENCLAW_CONFIG_PATH="$FRESH_STATE/openclaw.json"
+export XDG_CONFIG_HOME="$FRESH_HOME/.config"
+
+python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+cfg_path = Path(os.environ["OPENCLAW_CONFIG_PATH"])
+if not cfg_path.exists():
+    raise SystemExit("missing openclaw.json")
+data = json.loads(cfg_path.read_text(encoding="utf-8"))
+
+def set_nested(root, dotted, value):
+    cursor = root
+    parts = dotted.split(".")
+    for part in parts[:-1]:
+        child = cursor.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            cursor[part] = child
+        cursor = child
+    cursor[parts[-1]] = value
+
+agents = data.setdefault("agents", {})
+if isinstance(agents, dict):
+    agents["list"] = []
+
+channels = data.get("channels")
+if isinstance(channels, dict):
+    for channel in channels.values():
+        if isinstance(channel, dict):
+            channel["enabled"] = False
+            exec_approvals = channel.get("execApprovals")
+            if not isinstance(exec_approvals, dict):
+                exec_approvals = {}
+                channel["execApprovals"] = exec_approvals
+            exec_approvals["enabled"] = False
+
+plugins = data.setdefault("plugins", {})
+stale = {"marxbiotech-git-tools", "lab"}
+allow = plugins.get("allow")
+if isinstance(allow, list):
+    plugins["allow"] = [item for item in allow if item not in stale]
+entries = plugins.get("entries")
+if isinstance(entries, dict):
+    for item in stale:
+        entries.pop(item, None)
+
+set_nested(data, "browser.headless", True)
+set_nested(data, "browser.noSandbox", True)
+set_nested(data, "gateway.reload.mode", "off")
+set_nested(data, "agents.defaults.skipBootstrap", True)
+set_nested(data, "agents.defaults.sandbox.mode", "off")
+set_nested(data, "agents.defaults.model.primary", os.environ["SWEEP_MODEL"])
+set_nested(data, "agents.defaults.subagents.model.primary", os.environ["SWEEP_MODEL"])
+set_nested(data, "tools.exec.host", os.environ.get("OPENCLAW_EXEC_HOST", "gateway"))
+set_nested(data, "tools.exec.security", "full")
+set_nested(data, "tools.exec.ask", "off")
+set_nested(data, "approvals.exec.enabled", False)
+
+cfg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+approvals_path = cfg_path.with_name("exec-approvals.json")
+approvals = {
+    "version": 1,
+    "socket": {
+        "path": str(approvals_path.with_suffix(".sock")),
+        "token": "container-lane-eval-token",
+    },
+    "defaults": {"security": "full", "ask": "off", "askFallback": "full"},
+    "agents": {"*": {"security": "full", "ask": "off", "askFallback": "full"}},
+}
+approvals_path.write_text(json.dumps(approvals, indent=2) + "\n", encoding="utf-8")
+PY
+
+if [ "${CLAWBENCH_ENABLE_GBRAIN:-0}" = "1" ]; then
+  export CLAWBENCH_LANE_PREPARE_CMD="${CLAWBENCH_LANE_PREPARE_CMD:-/home/node/app/scripts/setup_gbrain_runtime.sh}"
+  "$CLAWBENCH_LANE_PREPARE_CMD"
+fi
+
+echo "===== CONTAINER LANE EVAL START $(date '+%Y-%m-%d %H:%M:%S') ====="
+echo "label:    $SWEEP_LABEL"
+echo "model:    $SWEEP_MODEL"
+echo "runs:     $SWEEP_RUNS"
+echo "lanes:    $SWEEP_LANES"
+echo "tasks:    ${SWEEP_TASKS:-${CHERRY_TASKS:-all}}"
+echo "out:      $OUT"
+echo "log:      $LOG"
+echo "home:     $HOME"
+echo "state:    $OPENCLAW_STATE_DIR"
+openclaw --version 2>/dev/null || true
+
+set +e
+python - <<'PY' > "$LOG" 2>&1
+import asyncio
+import json
+import logging
+import os
+import shutil
+from pathlib import Path
+
+from clawbench.queue import JobQueue, JobStatus, SubmissionRequest
+from clawbench.worker import EvalWorker, RESULTS_DIR
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+async def main() -> int:
+    queue = JobQueue()
+    queue._jobs.clear()
+    queue._save_local()
+    task_ids_raw = os.environ.get("SWEEP_TASKS") or os.environ.get("CHERRY_TASKS") or ""
+    task_ids = [item.strip() for item in task_ids_raw.split(",") if item.strip()]
+    request = SubmissionRequest(
+        model=os.environ["SWEEP_MODEL"],
+        runs_per_task=int(os.environ["SWEEP_RUNS"]),
+        max_parallel_lanes=int(os.environ["SWEEP_LANES"]),
+        task_ids=task_ids,
+        prompt_variant=os.environ.get("SWEEP_PROMPT_VARIANT", "clear"),
+        judge_model=os.environ.get("CLAWBENCH_JUDGE_MODEL", ""),
+        notes=os.environ.get("SWEEP_LABEL", ""),
+    )
+    job = await queue.submit(request)
+    worker = EvalWorker(queue)
+    await worker._process_job(job)
+    final = await queue.get_status(job.job_id)
+    print(json.dumps(final.model_dump() if final else {}, indent=2), flush=True)
+    if final is None or final.status != JobStatus.FINISHED or not final.result_id:
+        return 1
+    result_path = RESULTS_DIR / f"{final.result_id}.json"
+    output_path = Path(os.environ["SWEEP_OUTPUT_PATH"])
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(result_path, output_path)
+    return 0
+
+raise SystemExit(asyncio.run(main()))
+PY
+status=$?
+set -e
+
+echo "===== lane eval exit=$status $(date '+%Y-%m-%d %H:%M:%S') ====="
+tail -120 "$LOG" 2>/dev/null || true
+exit "$status"

@@ -13,7 +13,7 @@ dependencies = [
     "gradio>=5.0,<6",
     "httpx>=0.27,<1",
     "numpy>=1.26,<3",
-    "rich>=13.0,<14",
+    "rich>=13.0,<15",
     "click>=8.1,<9",
     # Runtime deps for the task completion verifier. The harness shells out
     # to `pytest -q` / `pytest-asyncio` inside per-task workspaces as the
@@ -30,6 +30,9 @@ dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.24,<1",
 ]
+hermes = [
+    "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@main",
+]
 
 [project.scripts]
 clawbench = "clawbench.cli:main"
@@ -45,3 +48,6 @@ force-include = { "tasks-public" = "tasks-public", "profiles" = "profiles", "bas
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

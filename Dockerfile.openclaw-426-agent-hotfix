@@ -1,0 +1,8 @@
+FROM ghcr.io/openclaw/openclaw:2026.4.26
+
+USER root
+COPY patches/patch_openclaw_426_agent_create_queue.mjs /tmp/patch_openclaw_426_agent_create_queue.mjs
+RUN node /tmp/patch_openclaw_426_agent_create_queue.mjs && \
+    rm /tmp/patch_openclaw_426_agent_create_queue.mjs
+
+USER node

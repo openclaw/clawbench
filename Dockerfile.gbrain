@@ -1,0 +1,113 @@
+# ClawBench + latest upstream GBrain for OpenClaw harness comparisons.
+#
+# Secrets are not baked into this image. Runtime API keys are read from the
+# mounted OpenClaw config/env by scripts/setup_gbrain_runtime.sh.
+
+ARG BASE=ghcr.io/openclaw/openclaw:latest
+FROM ${BASE}
+
+USER root
+
+ARG GBRAIN_REPO=https://github.com/garrytan/gbrain.git
+ARG GBRAIN_REF=be8fffad71ea36bc51c2d58564762b0fe271e8f4
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq python3-pip python-is-python3 unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN ln -s /app /openclaw
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    NODE_PATH=/usr/local/lib/node_modules
+RUN npm install -g playwright@1.59.1 && \
+    playwright install --with-deps chromium && \
+    CHROME_PATH="$(find /ms-playwright -path '*/chrome' -type f | sort | head -n 1)" && \
+    test -x "$CHROME_PATH" && \
+    ln -sf "$CHROME_PATH" /usr/bin/chromium
+
+ENV BUN_INSTALL=/usr/local/bun
+RUN mkdir -p /usr/local/bun && \
+    curl -fsSL https://bun.sh/install | bash
+RUN git clone "${GBRAIN_REPO}" /opt/gbrain && \
+    cd /opt/gbrain && \
+    git checkout "${GBRAIN_REF}" && \
+    /usr/local/bun/bin/bun install --frozen-lockfile
+
+RUN mkdir -p /opt/gbrain/.codex-plugin /opt/gbrain/bin && \
+    printf '%s\n' \
+      '#!/usr/bin/env bash' \
+      'set -euo pipefail' \
+      'cd /opt/gbrain' \
+      'exec /usr/local/bun/bin/bun run src/cli.ts "$@"' \
+      > /opt/gbrain/bin/gbrain && \
+    printf '%s\n' \
+      '{' \
+      '  "id": "gbrain",' \
+      '  "name": "gbrain",' \
+      '  "description": "Personal knowledge brain with PGLite-backed CLI, skills, and MCP server",' \
+      '  "version": "0.22.6",' \
+      '  "skills": "skills",' \
+      '  "mcpServers": {' \
+      '    "gbrain": {' \
+      '      "command": "/opt/gbrain/bin/gbrain",' \
+      '      "args": ["serve"],' \
+      '      "cwd": "/opt/gbrain",' \
+      '      "connectionTimeoutMs": 120000,' \
+      '      "env": {' \
+      '        "PATH": "/opt/gbrain/bin:/usr/local/bun/bin:/usr/local/bin:/usr/bin:/bin"' \
+      '      }' \
+      '    }' \
+      '  },' \
+      '  "configSchema": {' \
+      '    "type": "object",' \
+      '    "additionalProperties": true,' \
+      '    "properties": {' \
+      '      "database_url": {"type": "string"},' \
+      '      "openai_api_key": {"type": "string"}' \
+      '    }' \
+      '  }' \
+      '}' \
+      > /opt/gbrain/.codex-plugin/plugin.json && \
+    chmod +x /opt/gbrain/bin/gbrain && \
+    ln -sf /opt/gbrain/bin/gbrain /usr/local/bin/gbrain && \
+    ln -sf /usr/local/bun/bin/bun /usr/local/bin/bun && \
+    chown -R node:node /opt/gbrain && \
+    git config --system --add safe.directory /opt/gbrain
+
+ENV PATH=/opt/gbrain/bin:/usr/local/bun/bin:/home/node/.local/bin:$PATH \
+    HOME=/home/node \
+    CLAWBENCH_ENABLE_GBRAIN=1 \
+    CLAWBENCH_LANE_PREPARE_CMD=/home/node/app/scripts/setup_gbrain_runtime.sh \
+    GBRAIN_ALLOW_SHELL_JOBS=1
+
+WORKDIR /home/node/app
+
+COPY --chown=node:node pyproject.toml README.md ./
+COPY --chown=node:node clawbench/ clawbench/
+COPY --chown=node:node tasks-public/ tasks-public/
+COPY --chown=node:node tasks-domain/ tasks-domain/
+COPY --chown=node:node baselines/ baselines/
+COPY --chown=node:node scripts/container_adapter_eval.sh scripts/container_lane_eval.sh scripts/setup_gbrain_runtime.sh scripts/
+COPY --chown=node:node app.py .
+
+RUN chmod +x scripts/container_adapter_eval.sh scripts/container_lane_eval.sh scripts/setup_gbrain_runtime.sh && \
+    python3 -m pip install --break-system-packages --no-cache-dir .
+
+RUN mkdir -p \
+    /data/results \
+    /data/queue \
+    /home/node/.openclaw/agents/dev \
+    /home/node/.openclaw/agents/main/agent && \
+    chown -R node:node /data /home/node/.openclaw && \
+    chmod -R 777 /data /home/node/.openclaw
+
+USER node
+
+ENV GATEWAY_PORT=18789
+ENV OPENCLAW_HOME=/home/node
+ENV OPENCLAW_STATE_DIR=/home/node/.openclaw
+
+EXPOSE 7860
+CMD ["python", "app.py"]

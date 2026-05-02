@@ -26,8 +26,14 @@ logger = logging.getLogger(__name__)
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
-# Local fallback when HF is unavailable
-LOCAL_QUEUE_DIR = Path("/data/queue") if Path("/data").exists() else Path("data/queue")
+# Local fallback when HF is unavailable. Containerized sweeps run several
+# independent workers against the same /data mount, so callers may isolate this.
+LOCAL_QUEUE_DIR = Path(
+    os.environ.get(
+        "CLAWBENCH_LOCAL_QUEUE_DIR",
+        "/data/queue" if Path("/data").exists() else "data/queue",
+    )
+)
 
 
 class JobStatus(str, Enum):
@@ -49,6 +55,7 @@ class SubmissionRequest(BaseModel):
     max_parallel_lanes: int = Field(default=1, ge=1, le=8)
     tier: str | None = None  # Filter to a specific tier
     scenario: str | None = None
+    task_ids: list[str] = Field(default_factory=list)
     prompt_variant: str = "clear"
     submitter: str = ""  # HF username
     notes: str = ""

@@ -40,12 +40,20 @@ def build_runtime_values(
     repo_root: Path,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    openclaw_repo = os.environ.get("OPENCLAW_REPO")
+    openclaw_node_path = os.environ.get("OPENCLAW_NODE_PATH")
+    if not openclaw_node_path and openclaw_repo:
+        openclaw_node_path = str(Path(openclaw_repo) / "node_modules")
+    benchmark_node_parts = [str(repo_root / "node_modules")]
+    global_node_path = os.environ.get("NODE_PATH")
+    if global_node_path:
+        benchmark_node_parts.append(global_node_path)
     values = {
         "workspace": str(workspace),
         "workspace_name": workspace.name,
         "repo_root": str(repo_root),
-        "benchmark_node_path": str(repo_root / "node_modules"),
-        "openclaw_node_path": "/openclaw/node_modules",
+        "benchmark_node_path": ":".join(benchmark_node_parts),
+        "openclaw_node_path": openclaw_node_path or "/openclaw/node_modules",
         "python_exe": sys.executable,
     }
     if extra:

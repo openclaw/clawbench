@@ -104,10 +104,23 @@ Each task will declare:
 - `family`
 - `surface`
 - `capabilities`
+- `category`
+- `domain`
+- `functionality`
+- `trace_distribution`
+- `tool_surface`
+- `risk_tags`
 - `pool`
 - `variant_group`
 - `official`
 - `semantic_judge`
+
+The added dimensions are flat, orthogonal leaderboard axes. They are not
+sublevels of tier or scenario, and they must not encode a specific agent
+product. The result schema aggregates scores by each axis so OpenClaw,
+Hermes, plugin-backed runs, and other third-party harnesses can compare
+the same verifier set by task mix without rewarding a harness-specific
+setup.
 
 Recommended capability tags:
 

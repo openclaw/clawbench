@@ -16,8 +16,10 @@ RUN apt-get update && \
 
 RUN ln -s /app /openclaw
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npx -y playwright@1.59.1 install --with-deps chromium && \
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    NODE_PATH=/usr/local/lib/node_modules
+RUN npm install -g playwright@1.59.1 && \
+    playwright install --with-deps chromium && \
     CHROME_PATH="$(find /ms-playwright -path '*/chrome' -type f | sort | head -n 1)" && \
     test -x "$CHROME_PATH" && \
     ln -sf "$CHROME_PATH" /usr/bin/chromium

@@ -7,15 +7,45 @@ from clawbench.tasks import load_all_tasks
 
 def test_load_all_tasks_returns_full_corpus():
     tasks = load_all_tasks()
-    # Public Core release has 19 tasks; full private dev set has 40.
+    # Public Core release has 27 tasks; full private dev set has 48.
     # Either must cover tiers 1-5 and carry capability/subset/judge metadata.
-    assert len(tasks) >= 19
+    assert len(tasks) >= 27
     assert {task.tier.value for task in tasks} == {"tier1", "tier2", "tier3", "tier4", "tier5"}
     assert any(task.capabilities for task in tasks)
     assert any(task.subsets for task in tasks)
     assert any(task.scenario is not None for task in tasks)
     assert any("ambiguous" in [variant.value for variant in task.prompt_variants] for task in tasks)
     assert sum(1 for task in tasks if task.judge is not None) >= 6
+    assert all(task.category for task in tasks)
+    assert all(task.domain for task in tasks)
+    assert all(task.functionality for task in tasks)
+    assert all(task.trace_distribution for task in tasks)
+    assert all(task.tool_surface for task in tasks)
+    assert all(task.risk_tags for task in tasks)
+
+
+def test_public_tasks_include_leaderboard_dimension_metadata():
+    tasks = load_all_tasks(tasks_dir=Path("tasks-public"))
+    task_ids = {task.id for task in tasks}
+
+    assert len(tasks) == 27
+    assert "t1-bugfix-discount" in task_ids
+    for task in tasks:
+        assert task.category, task.id
+        assert task.domain, task.id
+        assert task.functionality, task.id
+        assert task.trace_distribution, task.id
+        assert task.tool_surface, task.id
+        assert task.risk_tags, task.id
+
+    assert {task.category for task in tasks} >= {
+        "software_engineering",
+        "data",
+        "research",
+        "personal_productivity",
+    }
+    assert any("memory_heavy" in task.trace_distribution for task in tasks)
+    assert any("browser" in task.tool_surface for task in tasks)
 
 
 def test_load_all_tasks_supports_pool_subset_and_capability_filters():

@@ -226,14 +226,73 @@ class GatewayClient:
             attempt += 1
             try:
                 remaining = max(1.0, deadline - asyncio.get_running_loop().time())
+                attempt_timeout = min(30.0, remaining)
                 self._ws = await websockets.connect(
                     self.config.url,
                     max_size=10 * 1024 * 1024,
-                    open_timeout=min(self.config.connect_timeout, remaining),
+                    open_timeout=attempt_timeout,
                     additional_headers={"Origin": host},
                 )
-                break
+                self._listen_task = asyncio.create_task(self._listener())
+                challenge = await self._wait_event(
+                    "connect.challenge", timeout=attempt_timeout
+                )
+                challenge_payload = challenge.get("payload", {})
+                nonce = ""
+                if isinstance(challenge_payload, dict):
+                    raw_nonce = challenge_payload.get("nonce", "")
+                    if isinstance(raw_nonce, str):
+                        nonce = raw_nonce.strip()
+
+                role = "operator"
+                scopes = [
+                    "operator.admin",
+                    "operator.read",
+                    "operator.write",
+                    "operator.approvals",
+                    "operator.pairing",
+                ]
+                client_info = {
+                    "id": "openclaw-control-ui",
+                    "version": __version__,
+                    "platform": "linux",
+                    "mode": "ui",
+                }
+                connect_params: dict[str, Any] = {
+                    "minProtocol": PROTOCOL_VERSION,
+                    "maxProtocol": PROTOCOL_VERSION,
+                    "client": client_info,
+                    "role": role,
+                    "scopes": scopes,
+                    "caps": [],
+                    "commands": [],
+                    "permissions": {},
+                    "auth": {"token": self.config.token} if self.config.token else {},
+                }
+                device = _build_connect_device(
+                    nonce=nonce,
+                    token=self.config.token,
+                    client_id=str(client_info["id"]),
+                    client_mode=str(client_info["mode"]),
+                    role=role,
+                    scopes=scopes,
+                    platform=str(client_info["platform"]),
+                )
+                if device:
+                    connect_params["device"] = device
+
+                response = await self._rpc(
+                    "connect",
+                    connect_params,
+                    timeout=attempt_timeout,
+                )
+                payload = response.get("payload", {})
+                if payload.get("type") != "hello-ok":
+                    raise ConnectionError(f"Expected hello-ok, got: {payload}")
+                logger.info("Connected to gateway (protocol v%s)", payload.get("protocol", "?"))
+                return
             except Exception as exc:
+                await self.close()
                 if not _is_transient_gateway_connect_error(exc):
                     raise
                 if asyncio.get_running_loop().time() >= deadline:
@@ -245,60 +304,6 @@ class GatewayClient:
                     delay,
                 )
                 await asyncio.sleep(delay)
-        self._listen_task = asyncio.create_task(self._listener())
-        challenge = await self._wait_event("connect.challenge", timeout=self.config.connect_timeout)
-        challenge_payload = challenge.get("payload", {})
-        nonce = ""
-        if isinstance(challenge_payload, dict):
-            raw_nonce = challenge_payload.get("nonce", "")
-            if isinstance(raw_nonce, str):
-                nonce = raw_nonce.strip()
-
-        role = "operator"
-        scopes = [
-            "operator.admin",
-            "operator.read",
-            "operator.write",
-            "operator.approvals",
-            "operator.pairing",
-        ]
-        client_info = {
-            "id": "openclaw-control-ui",
-            "version": __version__,
-            "platform": "linux",
-            "mode": "ui",
-        }
-        connect_params: dict[str, Any] = {
-            "minProtocol": PROTOCOL_VERSION,
-            "maxProtocol": PROTOCOL_VERSION,
-            "client": client_info,
-            "role": role,
-            "scopes": scopes,
-            "caps": [],
-            "commands": [],
-            "permissions": {},
-            "auth": {"token": self.config.token} if self.config.token else {},
-        }
-        device = _build_connect_device(
-            nonce=nonce,
-            token=self.config.token,
-            client_id=str(client_info["id"]),
-            client_mode=str(client_info["mode"]),
-            role=role,
-            scopes=scopes,
-            platform=str(client_info["platform"]),
-        )
-        if device:
-            connect_params["device"] = device
-
-        response = await self._rpc(
-            "connect",
-            connect_params,
-        )
-        payload = response.get("payload", {})
-        if payload.get("type") != "hello-ok":
-            raise ConnectionError(f"Expected hello-ok, got: {payload}")
-        logger.info("Connected to gateway (protocol v%s)", payload.get("protocol", "?"))
 
     async def close(self) -> None:
         if self._listen_task and not self._listen_task.done():
@@ -394,6 +399,15 @@ class GatewayClient:
         except Exception as exc:
             logger.warning("Failed to delete session %s: %s", session_key, exc)
 
+    async def abort_session(self, session_key: str, *, run_id: str | None = None) -> None:
+        params: dict[str, Any] = {"key": session_key}
+        if run_id:
+            params["runId"] = run_id
+        try:
+            await self._rpc("sessions.abort", params, timeout=min(self.config.request_timeout, 10.0))
+        except Exception as exc:
+            logger.warning("Failed to abort session %s run %s: %s", session_key, run_id or "-", exc)
+
     async def get_effective_tools(self, session_key: str) -> dict[str, Any]:
         response = await self._rpc("tools.effective", {"sessionKey": session_key})
         return response.get("payload", {})
@@ -413,14 +427,26 @@ class GatewayClient:
         msg_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._event_queues[chat_queue_key] = chat_queue
         self._event_queues[msg_queue_key] = msg_queue
+        timeout_ms = max(1, min(int(timeout * 1000), 2_147_483_647))
 
-        await self._rpc(
+        send_response = await self._rpc(
             "sessions.send",
             {
                 "key": session_key,
                 "message": message,
                 "idempotencyKey": idempotency_key,
+                "timeoutMs": timeout_ms,
             },
+        )
+        send_payload = send_response.get("payload", {})
+        run_id = idempotency_key
+        if isinstance(send_payload, dict):
+            raw_run_id = send_payload.get("runId")
+            if isinstance(raw_run_id, str) and raw_run_id.strip():
+                run_id = raw_run_id.strip()
+
+        wait_task = asyncio.create_task(
+            self._wait_for_agent_run(run_id, timeout_ms=timeout_ms)
         )
 
         collected_messages: list[TranscriptMessage] = []
@@ -430,8 +456,31 @@ class GatewayClient:
             while not done:
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
-                    logger.warning("Timeout waiting for final state on session %s", session_key)
+                    logger.warning(
+                        "Timeout waiting for final state on session %s run %s",
+                        session_key,
+                        run_id,
+                    )
                     break
+                if wait_task.done():
+                    wait_payload = _task_result_or_empty(wait_task)
+                    status = str(wait_payload.get("status", ""))
+                    if status and status != "timeout":
+                        logger.info(
+                            "agent.wait observed terminal status for session %s run %s: %s",
+                            session_key,
+                            run_id,
+                            status,
+                        )
+                        done = True
+                        break
+                    if status == "timeout":
+                        logger.warning(
+                            "agent.wait timed out for session %s run %s",
+                            session_key,
+                            run_id,
+                        )
+                        break
                 try:
                     event = await asyncio.wait_for(chat_queue.get(), timeout=min(0.5, remaining))
                     state = event.get("payload", {}).get("state", "")
@@ -439,6 +488,9 @@ class GatewayClient:
                         done = True
                 except asyncio.TimeoutError:
                     pass
+
+            if not done:
+                await self.abort_session(session_key, run_id=run_id)
 
             collected_messages.extend(
                 await _drain_message_queue(
@@ -464,10 +516,29 @@ class GatewayClient:
             ):
                 collected_messages = history_messages
         finally:
+            if not wait_task.done():
+                wait_task.cancel()
+                try:
+                    await wait_task
+                except asyncio.CancelledError:
+                    pass
             self._event_queues.pop(chat_queue_key, None)
             self._event_queues.pop(msg_queue_key, None)
 
         return _correlate_transcript(Transcript(messages=collected_messages))
+
+    async def _wait_for_agent_run(self, run_id: str, *, timeout_ms: int) -> dict[str, Any]:
+        try:
+            response = await self._rpc(
+                "agent.wait",
+                {"runId": run_id, "timeoutMs": timeout_ms},
+                timeout=(timeout_ms / 1000.0) + 10.0,
+            )
+        except Exception as exc:
+            logger.warning("agent.wait failed for run %s: %s", run_id, exc)
+            return {}
+        payload = response.get("payload", {})
+        return payload if isinstance(payload, dict) else {}
 
     async def get_session_messages(self, session_key: str) -> list[TranscriptMessage]:
         try:
@@ -574,6 +645,13 @@ def _build_connect_device(
     platform: str,
     device_family: str | None = None,
 ) -> dict[str, Any] | None:
+    if os.environ.get("CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return None
     if not nonce:
         return None
 
@@ -643,6 +721,10 @@ def _resolve_node_executable() -> str | None:
 
 
 def _is_transient_gateway_connect_error(exc: Exception) -> bool:
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return True
+    if isinstance(exc, websockets.exceptions.ConnectionClosed):
+        return True
     if isinstance(exc, InvalidStatus):
         return exc.response.status_code in {502, 503, 504}
     if isinstance(exc, InvalidMessage):
@@ -656,6 +738,13 @@ def _describe_connect_error(exc: Exception) -> str:
     if isinstance(exc, InvalidStatus):
         return f"HTTP {exc.response.status_code}"
     return exc.__class__.__name__
+
+
+def _task_result_or_empty(task: asyncio.Task[dict[str, Any]]) -> dict[str, Any]:
+    try:
+        return task.result()
+    except Exception:
+        return {}
 
 
 def _parse_single_message(message_data: dict[str, Any]) -> TranscriptMessage | None:

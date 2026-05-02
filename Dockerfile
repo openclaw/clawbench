@@ -1,8 +1,8 @@
 # ClawBench HF Docker Space
-# Layer the benchmark harness on top of a pinned OpenClaw image.
+# Layer the benchmark harness on top of the official OpenClaw image.
 
-ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:2e32f4f2e4f653f12d5dc6e5c93cc71e60f49d1dfaf061b18e53c3e61a38fb48
-FROM ${OPENCLAW_IMAGE}
+ARG BASE=ghcr.io/openclaw/openclaw:latest
+FROM ${BASE}
 
 USER root
 
@@ -13,8 +13,10 @@ RUN apt-get update && \
 
 RUN ln -s /app /openclaw
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npx -y playwright@1.59.1 install --with-deps chromium && \
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    NODE_PATH=/usr/local/lib/node_modules
+RUN npm install -g playwright@1.59.1 && \
+    playwright install --with-deps chromium && \
     CHROME_PATH="$(find /ms-playwright -path '*/chrome' -type f | sort | head -n 1)" && \
     test -x "$CHROME_PATH" && \
     ln -sf "$CHROME_PATH" /usr/bin/chromium
@@ -38,7 +40,7 @@ RUN mkdir -p \
     /home/node/.openclaw/agents/dev \
     /home/node/.openclaw/agents/main/agent && \
     chown -R node:node /data /home/node/.openclaw && \
-    chmod -R 775 /data /home/node/.openclaw
+    chmod -R 777 /data /home/node/.openclaw
 
 USER node
 

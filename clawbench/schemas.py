@@ -390,6 +390,12 @@ class TaskDefinition(BaseModel):
     privacy_tier: str = ""
     contamination_risk: str = ""
     freshness_epoch: str = ""
+    category: str = ""
+    domain: str = ""
+    functionality: list[str] = Field(default_factory=list)
+    trace_distribution: list[str] = Field(default_factory=list)
+    tool_surface: list[str] = Field(default_factory=list)
+    risk_tags: list[str] = Field(default_factory=list)
     first_used_at: str = ""
     retire_after_runs: int = 0
     similarity_hash: str = ""
@@ -542,6 +548,12 @@ class TaskRunResult(BaseModel):
     privacy_tier: str = ""
     contamination_risk: str = ""
     freshness_epoch: str = ""
+    category: str = ""
+    domain: str = ""
+    functionality: list[str] = Field(default_factory=list)
+    trace_distribution: list[str] = Field(default_factory=list)
+    tool_surface: list[str] = Field(default_factory=list)
+    risk_tags: list[str] = Field(default_factory=list)
     similarity_hash: str = ""
     official: bool = False
     run_index: int
@@ -627,6 +639,12 @@ class TaskStats(BaseModel):
     privacy_tier: str = ""
     contamination_risk: str = ""
     freshness_epoch: str = ""
+    category: str = ""
+    domain: str = ""
+    functionality: list[str] = Field(default_factory=list)
+    trace_distribution: list[str] = Field(default_factory=list)
+    tool_surface: list[str] = Field(default_factory=list)
+    risk_tags: list[str] = Field(default_factory=list)
     similarity_hash: str = ""
     official: bool = False
     runs: int
@@ -740,6 +758,22 @@ class ScenarioResult(BaseModel):
     task_stats: list[TaskStats] = Field(default_factory=list)
 
 
+class DimensionResult(BaseModel):
+    dimension: str
+    value: str
+    mean_task_score: float
+    weighted_score: float
+    mean_completion: float
+    mean_trajectory: float
+    mean_behavior: float
+    mean_judge: float = 0.0
+    mean_reliability: float
+    pass_hat_k_rate: float
+    task_count: int = 0
+    total_weight: float = 0.0
+    task_ids: list[str] = Field(default_factory=list)
+
+
 class BenchmarkResult(BaseModel):
     submission_id: str
     model: str
@@ -788,6 +822,13 @@ class BenchmarkResult(BaseModel):
 
     tier_results: list[TierResult] = Field(default_factory=list)
     scenario_results: list[ScenarioResult] = Field(default_factory=list)
+    category_results: list[DimensionResult] = Field(default_factory=list)
+    domain_results: list[DimensionResult] = Field(default_factory=list)
+    functionality_results: list[DimensionResult] = Field(default_factory=list)
+    trace_distribution_results: list[DimensionResult] = Field(default_factory=list)
+    tool_surface_results: list[DimensionResult] = Field(default_factory=list)
+    risk_tag_results: list[DimensionResult] = Field(default_factory=list)
+    dimension_results: dict[str, list[DimensionResult]] = Field(default_factory=dict)
     task_results: list[TaskStats] = Field(default_factory=list)
 
     certified: bool = False
