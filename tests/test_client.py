@@ -37,6 +37,42 @@ def test_gateway_config_invalid_env_falls_back_to_default(monkeypatch, caplog, r
     assert any("CLAWBENCH_CONNECT_TIMEOUT" in r.getMessage() for r in caplog.records)
 
 
+@pytest.mark.asyncio
+async def test_gateway_client_disables_websocket_keepalive_for_long_rpc(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    connect_kwargs: dict[str, object] = {}
+
+    class FakeWebSocket:
+        async def close(self) -> None:
+            return None
+
+    async def fake_connect(*args, **kwargs):
+        connect_kwargs.update(kwargs)
+        return FakeWebSocket()
+
+    async def fake_wait_event(self, event_name: str, *, timeout: float):
+        return {"payload": {"nonce": ""}}
+
+    async def fake_rpc(self, method: str, params=None, **kwargs):
+        return {"payload": {"type": "hello-ok", "protocol": 3}}
+
+    async def fake_listener(self):
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr("clawbench.client.websockets.connect", fake_connect)
+    monkeypatch.setattr(GatewayClient, "_wait_event", fake_wait_event)
+    monkeypatch.setattr(GatewayClient, "_rpc", fake_rpc)
+    monkeypatch.setattr(GatewayClient, "_listener", fake_listener)
+
+    client = GatewayClient(GatewayConfig(connect_timeout=2))
+    await client.connect()
+    await client.close()
+
+    assert connect_kwargs["ping_interval"] is None
+    assert connect_kwargs["ping_timeout"] is None
+
+
 def test_tool_results_are_correlated_back_to_tool_calls():
     tool_message = _parse_single_message(
         {

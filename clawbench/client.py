@@ -232,6 +232,14 @@ class GatewayClient:
                     max_size=10 * 1024 * 1024,
                     open_timeout=attempt_timeout,
                     additional_headers={"Origin": host},
+                    # The benchmark uses loopback gateway sockets and can issue
+                    # long-lived RPCs (notably agent.wait while a provider call
+                    # is in flight). Python websockets' default keepalive can
+                    # close the connection before the gateway surfaces the
+                    # actual model/provider result, contaminating runs as infra
+                    # timeouts. The gateway already owns run-level timeouts.
+                    ping_interval=None,
+                    ping_timeout=None,
                 )
                 self._listen_task = asyncio.create_task(self._listener())
                 challenge = await self._wait_event(
