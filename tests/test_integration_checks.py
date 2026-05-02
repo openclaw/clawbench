@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import clawbench.tasks as tasks_module
 from clawbench.client import GatewayConfig
 from clawbench.environment import verify_completion
 from clawbench.harness import BenchmarkHarness
@@ -12,14 +13,8 @@ from clawbench.services import build_runtime_values, start_background_services, 
 from clawbench.tasks import load_all_tasks
 from clawbench.trajectory import evaluate_trajectory
 
-# The task set is moving to a private holdout; the public repo will ship a
-# different task set soon. Until then, skip integration tests that need
-# specific task ids when the tasks directory isn't present.
-_TASKS_DIR = Path(__file__).resolve().parent.parent / "tasks"
-pytestmark = pytest.mark.skipif(
-    not _TASKS_DIR.exists(),
-    reason="tasks/ directory not present (private holdout — public set TBD)",
-)
+PUBLIC_TASKS_DIR = Path(__file__).resolve().parent.parent / "tasks-public"
+tasks_module.TASKS_DIR = PUBLIC_TASKS_DIR
 
 
 class DummyClient:
@@ -28,8 +23,13 @@ class DummyClient:
 
 
 def _prepare_workspace(task_id: str, tmp_path: Path) -> tuple[Path, object]:
-    task = next(task for task in load_all_tasks() if task.id == task_id)
-    harness = BenchmarkHarness(gateway_config=GatewayConfig(), model="test-model", randomize_order=False)
+    task = next(task for task in load_all_tasks(tasks_dir=PUBLIC_TASKS_DIR) if task.id == task_id)
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test-model",
+        randomize_order=False,
+        tasks_dir=PUBLIC_TASKS_DIR,
+    )
     workspace = tmp_path / task_id
     workspace.mkdir(parents=True, exist_ok=True)
     harness._setup_workspace(task, workspace)
@@ -56,50 +56,6 @@ async def test_python_completion_check_passes_after_fix(tmp_path: Path):
     )
 
     assert result.score == 1.0
-
-
-@pytest.mark.asyncio
-async def test_node_completion_check_passes_after_fix(tmp_path: Path):
-    workspace, task = _prepare_workspace("t2-node-search-patch", tmp_path)
-    # After hardening, render.js also exports emptyNote() with a legitimate
-    # empty body. The scoped fix only patches normalizeNote's body and must
-    # leave emptyNote alone.
-    (workspace / "src" / "render.js").write_text(
-        "function normalizeNote(note) {\n"
-        "  return {\n"
-        "    title: note.title.trim(),\n"
-        "    body: note.body.trim(),\n"
-        "  };\n"
-        "}\n\n"
-        "function emptyNote() {\n"
-        "  return {\n"
-        "    title: \"\",\n"
-        "    body: \"\",\n"
-        "  };\n"
-        "}\n\n"
-        "module.exports = { normalizeNote, emptyNote };\n",
-        encoding="utf-8",
-    )
-    (workspace / "src" / "search.js").write_text(
-        "function filterNotes(notes, query) {\n"
-        "  const needle = query.trim().toLowerCase();\n"
-        "  return notes.filter((note) => note.title.toLowerCase().includes(needle) || note.body.toLowerCase().includes(needle));\n"
-        "}\n\n"
-        "module.exports = { filterNotes };\n",
-        encoding="utf-8",
-    )
-
-    runtime_values = build_runtime_values(workspace=workspace, repo_root=Path.cwd())
-    result = await verify_completion(
-        task.completion,
-        workspace=workspace,
-        client=DummyClient(),  # type: ignore[arg-type]
-        session_key="",
-        runtime_values=runtime_values,
-    )
-
-    assert result.score == 1.0
-
 
 def _playwright_available() -> bool:
     if not shutil.which("node"):
@@ -156,7 +112,10 @@ async def test_browser_completion_check_passes_after_fix(tmp_path: Path):
 
 
 def test_memory_task_trajectory_requires_memory_tool():
-    task = next(task for task in load_all_tasks() if task.id == "t4-memory-recall-continuation")
+    task = next(
+        task for task in load_all_tasks(tasks_dir=PUBLIC_TASKS_DIR)
+        if task.id == "t4-memory-recall-continuation"
+    )
     transcript = Transcript(
         messages=[
             TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="exec", input={"command": "cat docs/release_notes.md"}, success=True)]),
@@ -172,7 +131,10 @@ def test_memory_task_trajectory_requires_memory_tool():
 
 
 def test_delegation_task_trajectory_requires_delegate_family():
-    task = next(task for task in load_all_tasks() if task.id == "t4-delegation-repair")
+    task = next(
+        task for task in load_all_tasks(tasks_dir=PUBLIC_TASKS_DIR)
+        if task.id == "t4-delegation-repair"
+    )
     transcript = Transcript(
         messages=[
             TranscriptMessage(role="assistant", tool_calls=[ToolCall(name="exec", input={"command": "rg billing ."}, success=True)]),

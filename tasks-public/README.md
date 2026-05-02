@@ -57,12 +57,10 @@ tasks-public/
 docker build -t clawbench .
 ```
 
-The repo `Dockerfile` pins an OpenClaw image digest so public Space
-builds do not silently drift. Override `OPENCLAW_IMAGE` only when you
-intend to measure a different platform build. Note that platform
-upgrades can shift scores (we observed +0.13 to +0.29 per model going
-from 4.9 → 4.15-beta.1) — when comparing two model runs, build them
-against the same OpenClaw release.
+The repo `Dockerfile` layers ClawBench on the configured OpenClaw base
+image. Platform upgrades can shift scores, so record the OpenClaw
+version for every published comparison and build both sides of a
+comparison against the same OpenClaw release.
 
 ## How to run Core v1
 
@@ -107,10 +105,8 @@ your ClawBench config. See MANIFEST.yaml for a programmatic list.
 - **OpenClaw platform version matters.** Upgrading from 4.9 → 4.15-beta.1
   shifted scores by +0.13 to +0.29 across models. Build both sides of
   any comparison from the same OpenClaw release.
-- **Judge scores** come from Claude Sonnet 4.6 via direct Anthropic
-  API (with a fallback from the gateway judge). Scores assume the
-  judge is working correctly; re-judging broken runs may be required
-  (see `scripts/rejudge_all.py` in the main repo).
+- **Judge scores** are advisory and depend on the configured judge model.
+  They are reported separately and cannot replace deterministic checks.
 
 ## What's NOT in Core v1
 
@@ -120,9 +116,9 @@ your ClawBench config. See MANIFEST.yaml for a programmatic list.
 - **9 noise tasks** (cross-model SNR < 0.5) — either broken verifiers
   or genuinely ambiguous prompts. Scheduled for redesign.
 - **3 ranking-breaker tasks** — tasks where the cross-model ordering
-  conflicts with the reference ranking (e.g. `t2-node-search-patch`,
-  `t5-contradictory-requirements`). Not broken per se; just
-  inconsistent with the headline.
+  conflicts with the reference ranking. Not broken per se; just
+  inconsistent with the headline. Their task IDs and contents remain
+  private with the rest of the holdout.
 
 Also missing entirely from Core v1:
 - **Tier 6 long-horizon (100+ turn) tasks** — planned for v2.

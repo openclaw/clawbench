@@ -134,7 +134,13 @@ def test_aggregate_reports_advisory_judge_metrics():
 
 
 def test_compose_result_from_task_stats_supports_parallel_environment_metadata():
-    task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount")
+    task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount").model_copy(deep=True)
+    task.category = "software_engineering"
+    task.domain = "devtools"
+    task.functionality = ["bugfix", "regression_repair", "test_verification"]
+    task.trace_distribution = ["read_heavy", "edit_heavy", "execute_heavy", "recovery_heavy"]
+    task.tool_surface = ["filesystem", "shell"]
+    task.risk_tags = ["code_change"]
     harness = BenchmarkHarness(
         gateway_config=GatewayConfig(),
         model="test-model",

@@ -1,13 +1,13 @@
 #!/bin/bash
-# Shared helper sourced by container_sweep_*.sh scripts to snapshot the
-# per-model run_cache after a sweep completes. Called at END of each sweep.
+# Shared helper sourced by container runner scripts to snapshot the per-model
+# run_cache after a sweep completes. Called at END of each sweep.
 #
 # Requires these env vars (already set by parent script):
 #   CLAWBENCH_RUN_CACHE_DIR   - e.g. /data/run_cache
 #   CACHE_SUB                 - e.g. openai_gpt-5.4
-#   SWEEP_OUT_TAG             - e.g. v2026-4-18-pr68627-gpt54
+#   SWEEP_OUT_TAG             - e.g. core-v1-public
 #   SWEEP_LABEL               - e.g. gpt54
-#   SWEEP_LOGDIR              - e.g. /data/drift_2026-04-18-pr68627-gpt54
+#   SWEEP_LOGDIR              - e.g. /data/core-v1-public
 #
 # Writes snapshot to: /data/run_cache_archive/<SWEEP_OUT_TAG>/<CACHE_SUB>/
 # Also writes a metadata.json with sweep label/model/timestamp for indexing.
