@@ -23,6 +23,7 @@
 # Environment (optional):
 #   CLAWBENCH_IMAGE                Clawbench image (default: quay.io/sallyom/clawbench:latest)
 #   OPENCLAW_IMAGE                 OpenClaw image (default: ghcr.io/openclaw/openclaw:latest)
+#   OPENCLAW_GATEWAY_TOKEN         Existing gateway token (generated if unset)
 #   CLAWBENCH_MODEL                Model to eval (default: openai/gpt-5.5)
 #   MLFLOW_NAMESPACE               MLflow namespace (default: mlflow)
 #   MLFLOW_TRACKING_URI            External MLflow URI (skips MLflow deploy if set)
@@ -40,9 +41,6 @@ MLFLOW_NS="${MLFLOW_NAMESPACE:-mlflow}"
 CLAWBENCH_IMG="${CLAWBENCH_IMAGE:-quay.io/sallyom/clawbench:latest}"
 OPENCLAW_IMG="${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}"
 MLFLOW_IMG="${MLFLOW_IMAGE:-ghcr.io/mlflow/mlflow:v2.21.3}"
-
-command -v kubectl &>/dev/null || { echo "Missing: kubectl" >&2; exit 1; }
-kubectl cluster-info &>/dev/null || { echo "Cannot connect to cluster. Check kubeconfig." >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -76,6 +74,7 @@ Required environment:
 Optional environment:
   CLAWBENCH_IMAGE              Clawbench image (default: quay.io/sallyom/clawbench:latest)
   OPENCLAW_IMAGE               OpenClaw image (default: ghcr.io/openclaw/openclaw:latest)
+  OPENCLAW_GATEWAY_TOKEN       Existing gateway token (generated if unset)
   CLAWBENCH_MODEL              Model to eval (default: openai/gpt-5.5)
   MLFLOW_NAMESPACE             MLflow namespace (default: mlflow)
   MLFLOW_TRACKING_URI          External MLflow URI (skips MLflow deploy)
@@ -90,6 +89,8 @@ Works on Kubernetes and OpenShift.
 HELP
   exit 0
 fi
+
+command -v kubectl &>/dev/null || { echo "Missing: kubectl" >&2; exit 1; }
 
 if [[ -z "$NS" ]]; then
   echo "CLAWBENCH_NAMESPACE is required." >&2
@@ -110,6 +111,8 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+kubectl cluster-info &>/dev/null || { echo "Cannot connect to cluster. Check kubeconfig." >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # --logs
@@ -157,7 +160,13 @@ ensure_namespace_and_secret() {
 
   if ! kubectl get secret clawbench-secrets -n "$NS" &>/dev/null; then
     echo "Creating clawbench-secrets..."
-    GATEWAY_TOKEN=$(python3 -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())")
+    if [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+      GATEWAY_TOKEN="$OPENCLAW_GATEWAY_TOKEN"
+      GATEWAY_TOKEN_SOURCE="from OPENCLAW_GATEWAY_TOKEN"
+    else
+      GATEWAY_TOKEN=$(python3 -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())")
+      GATEWAY_TOKEN_SOURCE="generated"
+    fi
 
     SECRET_ARGS=(
       --from-literal=OPENCLAW_GATEWAY_TOKEN="$GATEWAY_TOKEN"
@@ -172,7 +181,7 @@ ensure_namespace_and_secret() {
     fi
 
     kubectl create secret generic clawbench-secrets -n "$NS" "${SECRET_ARGS[@]}"
-    echo "  Gateway token: generated"
+    echo "  Gateway token: $GATEWAY_TOKEN_SOURCE"
     [[ -n "${OPENAI_API_KEY:-}" ]] && echo "  OPENAI_API_KEY: set"
     [[ -n "${ANTHROPIC_API_KEY:-}" ]] && echo "  ANTHROPIC_API_KEY: set"
     [[ -n "${OPENROUTER_API_KEY:-}" ]] && echo "  OPENROUTER_API_KEY: set"
@@ -180,6 +189,7 @@ ensure_namespace_and_secret() {
   else
     echo "Secret clawbench-secrets already exists in '$NS'."
   fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -309,43 +319,124 @@ add_sidecar() {
       -p "[{\"op\":\"remove\",\"path\":\"/spec/template/spec/containers/$INDEX\"}]" >/dev/null
   fi
 
-  # Find openclaw-home volume name
-  HOME_VOLUME=$(kubectl get deploy/openclaw -n "$NS" -o json \
+  # Find the OpenClaw home volume, and capture existing volumes so add-sidecar
+  # also works with bring-your-own deployments that lack this repo's PVC layout.
+  VOLUME_INFO=$(kubectl get deploy/openclaw -n "$NS" -o json \
     | python3 -c "
 import json, sys
 spec = json.load(sys.stdin)['spec']['template']['spec']
+volume_names = [v.get('name') for v in spec.get('volumes', []) if v.get('name')]
+home_volume = 'openclaw-home'
 for c in spec['containers']:
     if c['name'] == 'gateway':
         for vm in c.get('volumeMounts', []):
             if vm['mountPath'] == '/home/node/.openclaw':
-                print(vm['name'])
-                sys.exit(0)
-print('openclaw-home')
+                home_volume = vm['name']
+                break
+print(json.dumps({
+    'home_volume': home_volume,
+    'volumes_present': 'volumes' in spec,
+    'volume_names': volume_names,
+}))
 ")
 
   echo "Adding clawbench sidecar (image: $CLAWBENCH_IMG)..."
 
-  # Check if results volume already exists
-  HAS_RESULTS_VOL=$(kubectl get deploy/openclaw -n "$NS" -o json \
-    | python3 -c "import json,sys; vs=json.load(sys.stdin)['spec']['template']['spec'].get('volumes',[]); print('yes' if any(v['name']=='clawbench-results' for v in vs) else 'no')")
+  PATCH=$(VOLUME_INFO="$VOLUME_INFO" CLAWBENCH_IMG="$CLAWBENCH_IMG" python3 - <<'PY'
+import json
+import os
 
-  PATCH='[{"op":"add","path":"/spec/template/spec/containers/-","value":{'
-  PATCH+='"name":"clawbench",'
-  PATCH+='"image":"'"$CLAWBENCH_IMG"'",'
-  PATCH+='"imagePullPolicy":"IfNotPresent",'
-  PATCH+='"command":["/bin/bash","-c","echo \"Waiting for gateway on localhost:18789...\"\nfor i in $(seq 1 90); do\n  python3 -c \"import socket; s=socket.create_connection((\\\"127.0.0.1\\\",18789),2); s.close()\" 2>/dev/null && echo \"Gateway ready\" && break\n  sleep 2\ndone\n\nif [ -n \"${MLFLOW_TRACKING_URI:-}\" ]; then\n  echo \"Checking MLflow at ${MLFLOW_TRACKING_URI}...\"\n  python3 -c \"import httpx,os; r=httpx.get(os.environ[\\\"MLFLOW_TRACKING_URI\\\"]+\\\"/health\\\"); print(\\\"MLflow OK:\\\",r.status_code)\" 2>&1 || echo \"MLflow pre-check failed (will retry at log time)\"\nfi\n\necho \"Starting eval...\"\nclawbench run \\\n  --model \"${CLAWBENCH_MODEL}\" \\\n  --gateway-token \"${OPENCLAW_GATEWAY_TOKEN}\" \\\n  --runs \"${CLAWBENCH_RUNS}\" \\\n  --concurrency \"${CLAWBENCH_CONCURRENCY}\" \\\n  ${CLAWBENCH_JUDGE_MODEL:+--judge-model \"${CLAWBENCH_JUDGE_MODEL}\"} \\\n  $([ -n \"${CLAWBENCH_TASKS:-}\" ] && for t in ${CLAWBENCH_TASKS}; do printf -- \"-t %s \" \"$t\"; done) \\\n  -o /results/benchmark.json\nRC=$?\nif [ $RC -eq 0 ] && [ -n \"${MLFLOW_TRACKING_URI:-}\" ]; then\n  python scripts/log_to_mlflow.py /results/benchmark.json\nfi\necho \"ClawBench finished (exit=$RC)\"\nsleep infinity"],'
-  PATCH+='"envFrom":[{"configMapRef":{"name":"clawbench-config"}}],'
-  PATCH+='"env":[{"name":"OPENCLAW_GATEWAY_TOKEN","valueFrom":{"secretKeyRef":{"name":"clawbench-secrets","key":"OPENCLAW_GATEWAY_TOKEN"}}}],'
-  PATCH+='"resources":{"requests":{"memory":"1Gi","cpu":"500m"},"limits":{"memory":"4Gi","cpu":"2"}},'
-  PATCH+='"volumeMounts":[{"name":"'"$HOME_VOLUME"'","mountPath":"/home/node/.openclaw"},{"name":"clawbench-results","mountPath":"/results"},{"name":"tmp-volume","mountPath":"/tmp"}],'
-  PATCH+='"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}'
-  PATCH+='}}'
+info = json.loads(os.environ["VOLUME_INFO"])
+home_volume = info["home_volume"]
 
-  if [[ "$HAS_RESULTS_VOL" == "no" ]]; then
-    PATCH+=',{"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"clawbench-results","emptyDir":{}}}'
-  fi
+command = r"""echo "Waiting for gateway on localhost:18789..."
+for i in $(seq 1 90); do
+  python3 -c "import socket; s=socket.create_connection((\"127.0.0.1\",18789),2); s.close()" 2>/dev/null && echo "Gateway ready" && break
+  sleep 2
+done
 
-  PATCH+=']'
+if [ -n "${MLFLOW_TRACKING_URI:-}" ]; then
+  echo "Checking MLflow at ${MLFLOW_TRACKING_URI}..."
+  python3 -c "import httpx,os; r=httpx.get(os.environ[\"MLFLOW_TRACKING_URI\"]+\"/health\"); print(\"MLflow OK:\",r.status_code)" 2>&1 || echo "MLflow pre-check failed (will retry at log time)"
+fi
+
+echo "Starting eval..."
+clawbench run \
+  --model "${CLAWBENCH_MODEL}" \
+  --gateway-token "${OPENCLAW_GATEWAY_TOKEN}" \
+  --runs "${CLAWBENCH_RUNS}" \
+  --concurrency "${CLAWBENCH_CONCURRENCY}" \
+  ${CLAWBENCH_JUDGE_MODEL:+--judge-model "${CLAWBENCH_JUDGE_MODEL}"} \
+  $([ -n "${CLAWBENCH_TASKS:-}" ] && for t in ${CLAWBENCH_TASKS}; do printf -- "-t %s " "$t"; done) \
+  -o /results/benchmark.json
+RC=$?
+if [ $RC -eq 0 ] && [ -n "${MLFLOW_TRACKING_URI:-}" ]; then
+  python scripts/log_to_mlflow.py /results/benchmark.json
+fi
+echo "ClawBench finished (exit=$RC)"
+sleep infinity"""
+
+container = {
+    "name": "clawbench",
+    "image": os.environ["CLAWBENCH_IMG"],
+    "imagePullPolicy": "IfNotPresent",
+    "command": ["/bin/bash", "-c", command],
+    "envFrom": [{"configMapRef": {"name": "clawbench-config"}}],
+    "env": [
+        {
+            "name": "OPENCLAW_GATEWAY_TOKEN",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "clawbench-secrets",
+                    "key": "OPENCLAW_GATEWAY_TOKEN",
+                }
+            },
+        }
+    ],
+    "resources": {
+        "requests": {"memory": "1Gi", "cpu": "500m"},
+        "limits": {"memory": "4Gi", "cpu": "2"},
+    },
+    "volumeMounts": [
+        {"name": home_volume, "mountPath": "/home/node/.openclaw"},
+        {"name": "clawbench-results", "mountPath": "/results"},
+        {"name": "tmp-volume", "mountPath": "/tmp"},
+    ],
+    "securityContext": {
+        "allowPrivilegeEscalation": False,
+        "capabilities": {"drop": ["ALL"]},
+    },
+}
+
+patch = [{"op": "add", "path": "/spec/template/spec/containers/-", "value": container}]
+
+existing_volumes = set(info["volume_names"])
+required_volumes = [
+    {"name": home_volume, "emptyDir": {}},
+    {"name": "clawbench-results", "emptyDir": {}},
+    {"name": "tmp-volume", "emptyDir": {}},
+]
+missing_volumes = []
+for volume in required_volumes:
+    if volume["name"] not in existing_volumes and volume["name"] not in {
+        item["name"] for item in missing_volumes
+    }:
+        missing_volumes.append(volume)
+
+if missing_volumes:
+    if info["volumes_present"]:
+        patch.extend(
+            {"op": "add", "path": "/spec/template/spec/volumes/-", "value": volume}
+            for volume in missing_volumes
+        )
+    else:
+        patch.append(
+            {"op": "add", "path": "/spec/template/spec/volumes", "value": missing_volumes}
+        )
+
+print(json.dumps(patch))
+PY
+)
 
   kubectl patch deploy/openclaw -n "$NS" --type=json -p "$PATCH" >/dev/null
 
@@ -389,6 +480,7 @@ case "$MODE" in
       echo "Deploy OpenClaw first with: ./scripts/k8s/deploy.sh --openclaw-only" >&2
       exit 1
     fi
+    ensure_namespace_and_secret
     add_sidecar
     ;;
 esac
