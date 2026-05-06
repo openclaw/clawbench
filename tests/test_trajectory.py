@@ -8,12 +8,6 @@ def _has_dangerous_shell_pattern(command: str) -> bool:
     return trajectory.has_dangerous_shell_pattern(command)
 
 
-def _has_dangerous_shell_pattern(command: str) -> bool:
-    from clawbench import trajectory
-
-    return trajectory.has_dangerous_shell_pattern(command)
-
-
 def test_trajectory_rewards_read_before_write_and_self_verification():
     transcript = Transcript(
         messages=[
@@ -98,6 +92,65 @@ def test_trajectory_tracks_recovery_and_dangerous_commands():
     assert result.recovered_failures == 2
     assert result.repeated_failures >= 1
     assert any("Dangerous shell command" in violation for violation in result.forbidden_violations)
+
+
+def test_command_with_multiple_dangerous_patterns_surfaces_single_violation():
+    # `sudo rm -rf /tmp/x` hits both \bsudo\b and \brm\s+-rf\b. The matcher in
+    # evaluate_trajectory emits ONE "Dangerous shell command" violation per
+    # command (regardless of how many patterns match), and the violation message
+    # echoes the offending command verbatim. Pattern-based safety scoring
+    # depends on this count — pinning here makes a future shift to per-pattern
+    # emission, or a refactor that strips the command from the message,
+    # test-visible. Anchored on \bsudo\b + \brm\s+-rf\b because both have been
+    # in DANGEROUS_SHELL_PATTERNS since the file's inception, so the test has
+    # no dependency on any in-flight pattern PR.
+    transcript = Transcript(
+        messages=[
+            TranscriptMessage(
+                role="assistant",
+                tool_calls=[ToolCall(name="exec", input={"command": "sudo rm -rf /tmp/x"}, success=True)],
+            ),
+        ]
+    )
+    expectations = TrajectoryExpectations(required_families=["execute"])
+
+    result = evaluate_trajectory(transcript, expectations)
+
+    dangerous_violations = [v for v in result.forbidden_violations if "Dangerous shell command" in v]
+    assert len(dangerous_violations) == 1, (
+        f"expected exactly one Dangerous shell command violation, got {dangerous_violations}"
+    )
+    assert "sudo rm -rf /tmp/x" in dangerous_violations[0], (
+        f"violation should echo the offending command, got {dangerous_violations[0]!r}"
+    )
+
+
+def test_each_dangerous_command_surfaces_its_own_violation():
+    # Companion to test_command_with_multiple_dangerous_patterns_surfaces_single_violation:
+    # two separate dangerous commands in one transcript should produce two
+    # violations (one per command). Together these pin per-command emission
+    # from both directions — multi-pattern collapses to one, multi-command
+    # does not collapse.
+    transcript = Transcript(
+        messages=[
+            TranscriptMessage(
+                role="assistant",
+                tool_calls=[ToolCall(name="exec", input={"command": "sudo rm -rf /tmp/a"}, success=True)],
+            ),
+            TranscriptMessage(
+                role="assistant",
+                tool_calls=[ToolCall(name="exec", input={"command": "sudo rm -rf /tmp/b"}, success=True)],
+            ),
+        ]
+    )
+    expectations = TrajectoryExpectations(required_families=["execute"])
+
+    result = evaluate_trajectory(transcript, expectations)
+
+    dangerous_violations = [v for v in result.forbidden_violations if "Dangerous shell command" in v]
+    assert len(dangerous_violations) == 2, (
+        f"expected two Dangerous shell command violations (one per command), got {dangerous_violations}"
+    )
 
 
 def test_trajectory_counts_distinct_read_and_mutation_targets():
