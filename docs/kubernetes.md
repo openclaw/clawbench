@@ -1,0 +1,361 @@
+# Running ClawBench on Kubernetes
+
+ClawBench runs as a **sidecar** in the OpenClaw gateway pod. The sidecar
+connects to the gateway over loopback (`ws://localhost:18789`), runs the
+19-task eval suite, and optionally logs results to MLflow.
+
+```
+┌─── OpenClaw Pod ─────────────────────────────┐
+│  gateway container  (ws://localhost:18789)   │
+│  clawbench sidecar  ──► gateway via loopback │
+└──────────────────────────────────────────────┘
+         │                          │
+         ▼                          ▼
+   Model provider API         MLflow (optional)
+```
+
+All commands use `scripts/k8s/deploy.sh`. The script has these modes:
+
+| Flag | What it does |
+|------|-------------|
+| *(none)* | Full deploy: OpenClaw + MLflow + eval sidecar |
+| `--openclaw-only` | Deploy OpenClaw gateway only |
+| `--mlflow-only` | Deploy MLflow only |
+| `--add-sidecar` | Inject clawbench sidecar (starts eval) |
+| `--remove-sidecar` | Remove clawbench sidecar |
+| `--logs` | Tail sidecar logs |
+| `--teardown` | Delete eval namespace (keeps MLflow) |
+
+---
+
+## Prerequisites
+
+- `kubectl` on PATH, connected to a cluster (`kubectl cluster-info` succeeds)
+- A container image for ClawBench (see [Building images](#building-images))
+- At least one model provider API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
+
+For local testing with Kind:
+https://github.com/openclaw/openclaw/blob/main/docs/install/kubernetes.md#local-testing-with-kind
+
+---
+
+## Environment variables
+
+Set these **before** running `deploy.sh`.
+
+### Required
+
+| Variable | Purpose |
+|----------|---------|
+| `CLAWBENCH_NAMESPACE` | Namespace for OpenClaw + eval (e.g. `clawbench-eval`) |
+| `OPENAI_API_KEY` | Model provider key (or use another provider — see table below) |
+
+### Optional
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CLAWBENCH_IMAGE` | `quay.io/sallyom/clawbench:latest` | ClawBench sidecar image |
+| `OPENCLAW_IMAGE` | `ghcr.io/openclaw/openclaw:latest` | OpenClaw gateway image |
+| `CLAWBENCH_MODEL` | `openai/gpt-5.5` | Model to evaluate |
+| `MLFLOW_NAMESPACE` | `mlflow` | MLflow namespace |
+| `MLFLOW_TRACKING_URI` | *(deployed by script)* | External MLflow URI — skips MLflow deploy if set |
+| `MLFLOW_EXPERIMENT_ID` | | MLflow experiment ID |
+| `MLFLOW_EXPERIMENT_NAME` | `clawbench` | MLflow experiment name |
+| `MLFLOW_IMAGE` | `ghcr.io/mlflow/mlflow:v2.21.3` | MLflow server image |
+| `ANTHROPIC_API_KEY` | | Added to K8s secret if set |
+| `OPENROUTER_API_KEY` | | Added to K8s secret if set |
+| `GEMINI_API_KEY` | | Added to K8s secret if set |
+| `OPENAI_API_BASE` | | Base URL for OpenAI-compatible endpoints (e.g. vLLM, Ollama); patched into gateway config |
+
+### Model routing
+
+The gateway routes by provider prefix:
+
+| Model string | Required variables |
+|-------------|-------------------|
+| `openai/gpt-5.5` | `OPENAI_API_KEY` |
+| `anthropic/claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
+| `openrouter/anthropic/claude-sonnet-4-6` | `OPENROUTER_API_KEY` |
+| `openai/my-local-model` | `OPENAI_API_KEY` + `OPENAI_API_BASE` |
+
+For OpenAI-compatible endpoints (vLLM, Ollama, TGI, or any in-cluster model
+server), set `OPENAI_API_BASE` to the endpoint URL and use the `openai/`
+prefix for the model name:
+
+```bash
+export CLAWBENCH_MODEL="openai/meta-llama/Llama-4-Scout-17B"
+export OPENAI_API_KEY="none"  # dummy value if the endpoint doesn't require auth
+export OPENAI_API_BASE="http://vllm-service.my-ns.svc.cluster.local:8000/v1"
+```
+
+---
+
+## Full deploy (quick start)
+
+Deploys OpenClaw gateway, MLflow, and the eval sidecar in one command.
+
+```bash
+export CLAWBENCH_NAMESPACE=clawbench-eval
+
+# Export API keys before running. The script stores them in a K8s Secret
+# ("clawbench-secrets") that the gateway and sidecar containers read.
+export OPENAI_API_KEY="sk-..."
+
+# Model to evaluate (default: openai/gpt-5.5)
+# export CLAWBENCH_MODEL="anthropic/claude-sonnet-4-6"
+
+./scripts/k8s/deploy.sh
+```
+
+Verify:
+
+```bash
+# Should show 2/2 containers (gateway + clawbench)
+kubectl get pods -n clawbench-eval
+
+# Follow eval progress
+./scripts/k8s/deploy.sh --logs
+```
+
+When the eval finishes, copy results and clean up:
+
+```bash
+# Copy results from the sidecar
+POD=$(kubectl get pod -n $CLAWBENCH_NAMESPACE -l app=openclaw -o jsonpath='{.items[0].metadata.name}')
+kubectl cp "$CLAWBENCH_NAMESPACE/$POD:/results/benchmark.json" -c clawbench ./benchmark.json
+
+# Remove the sidecar (keeps OpenClaw + MLflow running)
+./scripts/k8s/deploy.sh --remove-sidecar
+
+# Or tear down everything
+./scripts/k8s/deploy.sh --teardown
+```
+
+---
+
+## Existing cluster + existing MLflow
+
+If you already have an OpenShift or Kubernetes cluster and an MLflow instance,
+you only need to deploy OpenClaw and run the eval — no cluster or MLflow setup
+required.
+
+```bash
+export CLAWBENCH_NAMESPACE=clawbench-eval
+
+# API keys — export before running deploy.sh. The script creates a
+# Kubernetes Secret ("clawbench-secrets") from whichever keys are set.
+# At least one provider key is required.
+export OPENAI_API_KEY="sk-..."
+# export ANTHROPIC_API_KEY="sk-ant-..."
+# export OPENROUTER_API_KEY="sk-or-..."
+# export GEMINI_API_KEY="..."
+
+# Model to evaluate (default: openai/gpt-5.5)
+export CLAWBENCH_MODEL="anthropic/claude-sonnet-4-6"
+
+# Point to your existing MLflow
+export MLFLOW_TRACKING_URI="https://mlflow.example.com"
+export MLFLOW_EXPERIMENT_NAME="clawbench-gpt5.5"  # or use MLFLOW_EXPERIMENT_ID=42
+
+# Deploy OpenClaw gateway into your cluster
+./scripts/k8s/deploy.sh --openclaw-only
+```
+
+Verify OpenClaw is running:
+
+```bash
+kubectl get pods -n clawbench-eval
+# Expect: openclaw-xxxx  1/1  Running
+```
+
+Then start the eval:
+
+```bash
+./scripts/k8s/deploy.sh --add-sidecar
+./scripts/k8s/deploy.sh --logs
+```
+
+The deploy script sets `MLFLOW_TRACKING_URI` to skip its own MLflow deployment
+and patches the experiment name/ID into the clawbench ConfigMap. When the eval
+completes, `scripts/log_to_mlflow.py` logs results to your MLflow under that
+experiment.
+
+`MLFLOW_EXPERIMENT_NAME` creates the experiment if it doesn't exist.
+`MLFLOW_EXPERIMENT_ID` requires an existing experiment.
+
+---
+
+## Step-by-step deploy
+
+Use this when you want to deploy components individually or bring your own
+OpenClaw/MLflow.
+
+### Step 1: Deploy OpenClaw gateway
+
+```bash
+export CLAWBENCH_NAMESPACE=clawbench-eval
+export OPENAI_API_KEY="sk-..."
+./scripts/k8s/deploy.sh --openclaw-only
+```
+
+Verify:
+
+```bash
+kubectl get pods -n clawbench-eval
+# Expect: openclaw-xxxx  1/1  Running
+```
+
+This deploys from `scripts/k8s/openclaw/`: a single gateway pod with token
+auth, ClusterIP service, and 10Gi PVC. The deploy script generates a gateway
+token and creates the `clawbench-secrets` Secret automatically.
+
+**Skip this step** if you already have an OpenClaw deployment. Your existing
+gateway must have this config (see `scripts/k8s/openclaw/configmap.yaml`):
+
+```json
+{
+  "browser": {
+    "enabled": true,
+    "headless": true,
+    "noSandbox": true,
+    "ssrfPolicy": {
+      "allowedHostnames": ["localhost", "127.0.0.1"]
+    }
+  },
+  "tools": {
+    "profile": "coding",
+    "alsoAllow": ["browser"]
+  }
+}
+```
+
+Key requirements:
+- `browser.enabled: true` — activates the bundled browser plugin
+- `tools.alsoAllow: ["browser"]` — the `coding` profile does NOT include browser by default
+- `browser.ssrfPolicy` — several eval tasks need localhost access
+- Gateway must bind to loopback with token auth
+
+### Step 2: Deploy MLflow
+
+```bash
+./scripts/k8s/deploy.sh --mlflow-only
+```
+
+Verify:
+
+```bash
+kubectl get pods -n mlflow
+# Expect: mlflow-xxxx  1/1  Running
+```
+
+Deploys a single-replica MLflow server with SQLite backend into the `mlflow`
+namespace. The clawbench ConfigMap defaults to
+`http://mlflow-service.mlflow.svc.cluster.local:5000`.
+
+**Skip this step** if you have an external MLflow — set `MLFLOW_TRACKING_URI`:
+
+```bash
+export MLFLOW_TRACKING_URI=http://my-mlflow.example.com:5000
+export MLFLOW_EXPERIMENT_ID=4  # or MLFLOW_EXPERIMENT_NAME
+```
+
+### Step 3: Run the eval
+
+```bash
+./scripts/k8s/deploy.sh --add-sidecar
+```
+
+This patches the OpenClaw deployment to inject a clawbench sidecar that:
+
+1. Waits for the gateway (TCP check on port 18789, up to 3 min)
+2. Checks MLflow connectivity if configured
+3. Runs `clawbench run` with settings from the ConfigMap
+4. Logs results to MLflow on success
+5. Sleeps indefinitely so you can retrieve logs and results
+
+Verify:
+
+```bash
+kubectl get pods -n $CLAWBENCH_NAMESPACE
+# Expect: openclaw-xxxx  2/2  Running  (gateway + clawbench)
+
+./scripts/k8s/deploy.sh --logs
+# Should show "Waiting for gateway..." then "Starting eval..."
+```
+
+When finished, remove the sidecar:
+
+```bash
+./scripts/k8s/deploy.sh --remove-sidecar
+```
+
+---
+
+## ConfigMap tuning
+
+The clawbench ConfigMap (`scripts/k8s/manifests/configmap.yaml`) controls eval
+behavior. Override at deploy time via env vars, or patch after deploy:
+
+| Key | Default | What it controls |
+|-----|---------|-----------------|
+| `CLAWBENCH_MODEL` | `openai/gpt-5.5` | Model under test |
+| `CLAWBENCH_RUNS` | `3` | Runs per task (19 tasks x 3 = 57 total) |
+| `CLAWBENCH_CONCURRENCY` | `4` | Parallel eval lanes |
+| `CLAWBENCH_JUDGE_MODEL` | *(empty)* | Separate judge model (optional) |
+| `CLAWBENCH_TASKS` | *(empty — runs all)* | Space-separated task IDs (e.g. `t1-bugfix-discount t2-config-loader`) |
+| `CLAWBENCH_CONNECT_TIMEOUT` | `120` | Gateway connect timeout in seconds |
+| `CLAWBENCH_REQUEST_TIMEOUT` | `300` | Per-request timeout in seconds |
+| `CLAWBENCH_PER_RUN_BUDGET_SECONDS` | `600` | Max wall time per run |
+| `MLFLOW_TRACKING_URI` | `http://mlflow-service.mlflow.svc.cluster.local:5000` | MLflow endpoint |
+| `MLFLOW_EXPERIMENT_NAME` | `clawbench` | MLflow experiment name |
+
+---
+
+## MLflow integration
+
+Results are logged via `scripts/log_to_mlflow.py` after a successful eval.
+
+**What gets logged:**
+- **Params**: model, provider, benchmark version, OpenClaw version, judge model
+- **Metrics**: overall score, per-axis scores (completion, trajectory, behavior,
+  reliability), cost, tokens, latency, CI bounds, per-tier and per-task scores
+- **Tags**: submission ID, timestamp, certified flag
+- **Artifacts**: full benchmark result JSON
+
+---
+
+## Building images
+
+### ClawBench image
+
+`quay.io/sallyom/clawbench:latest` is public
+
+For Kubernetes, use the lightweight sidecar image instead — it only includes
+the eval harness and MLflow client:
+
+```bash
+docker build -t clawbench:latest -f scripts/k8s/Dockerfile .
+
+# For Kind clusters, load directly instead of pushing to a registry:
+kind load docker-image clawbench:latest --name openclaw
+
+# For non-Kind clusters, push to registry and set CLAWBENCH_IMAGE accordingly
+# Ensure you build for the right architecture, usually amd64 for non-local k8s
+```
+
+Set `CLAWBENCH_IMAGE=clawbench:latest` when running `deploy.sh` to use it.
+
+---
+
+## Cleanup
+
+```bash
+# Remove eval sidecar only (keeps OpenClaw + MLflow running for another eval)
+./scripts/k8s/deploy.sh --remove-sidecar
+
+# Delete eval namespace (keeps MLflow running)
+./scripts/k8s/deploy.sh --teardown
+
+# Delete the Kind cluster entirely
+kind delete cluster --name openclaw
+```

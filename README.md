@@ -461,6 +461,26 @@ python3 scripts/run_posterior_dynamics_pipeline.py \
 clawbench diagnose profiles/local_ollama_gpt_oss.yaml
 ```
 
+### Running on Kubernetes
+
+See [`docs/kubernetes.md`](docs/kubernetes.md) for the full runbook. The short
+version:
+
+```bash
+export CLAWBENCH_NAMESPACE=clawbench-eval
+export OPENAI_API_KEY="sk-..."       # or ANTHROPIC_API_KEY, OPENROUTER_API_KEY, etc.
+export CLAWBENCH_MODEL="openai/gpt-5.5"
+# export MLFLOW_NAMESPACE="mlflow"   # MLflow deploys in a separate namespace (default: mlflow)
+
+./scripts/k8s/deploy.sh              # deploys OpenClaw + MLflow + starts eval
+./scripts/k8s/deploy.sh --logs       # follow progress
+./scripts/k8s/deploy.sh --teardown   # tear down openclaw & eval (does not delete MLflow)
+```
+
+API keys are stored in a Kubernetes Secret created by the deploy script.
+MLflow is deployed in its own namespace (default: `mlflow`, configurable via
+`MLFLOW_NAMESPACE`).
+
 ---
 
 ## Partner Trace Spec

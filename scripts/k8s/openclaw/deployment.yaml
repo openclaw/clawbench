@@ -1,0 +1,146 @@
+# OpenClaw gateway deployment for ClawBench evals.
+#
+# Build the image with browser support:
+#   docker build --build-arg OPENCLAW_INSTALL_BROWSER=1 \
+#     -t quay.io/yourorg/openclaw:eval .
+#
+# Or use upstream without browser (browser eval tasks will score 0):
+#   image: ghcr.io/openclaw/openclaw:latest
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw
+  labels:
+    app: openclaw
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: openclaw
+  template:
+    metadata:
+      labels:
+        app: openclaw
+    spec:
+      initContainers:
+        - name: init-config
+          image: registry.access.redhat.com/ubi9-minimal:latest
+          command:
+            - sh
+            - -c
+            - |
+              cp /config/openclaw.json /home/node/.openclaw/openclaw.json
+              chmod 666 /home/node/.openclaw/openclaw.json
+              mkdir -p /home/node/.openclaw/workspace
+              mkdir -p /home/node/.openclaw/agents
+              chmod 777 /home/node/.openclaw /home/node/.openclaw/workspace /home/node/.openclaw/agents
+              echo "Config initialized"
+          volumeMounts:
+            - name: openclaw-home
+              mountPath: /home/node/.openclaw
+            - name: config-template
+              mountPath: /config
+          resources:
+            limits:
+              cpu: 200m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      containers:
+        - name: gateway
+          image: ghcr.io/openclaw/openclaw:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - umask 007 && exec node dist/index.js gateway run --bind loopback --port 18789 --allow-unconfigured
+          env:
+            - name: HOME
+              value: /home/node
+            - name: NODE_ENV
+              value: production
+            - name: OPENCLAW_CONFIG_DIR
+              value: /home/node/.openclaw
+            - name: OPENCLAW_STATE_DIR
+              value: /home/node/.openclaw
+            - name: OPENCLAW_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawbench-secrets
+                  key: OPENCLAW_GATEWAY_TOKEN
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: clawbench-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: clawbench-secrets
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: clawbench-secrets
+                  key: OPENROUTER_API_KEY
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: clawbench-secrets
+                  key: GEMINI_API_KEY
+                  optional: true
+          ports:
+            - name: gateway
+              containerPort: 18789
+              protocol: TCP
+          livenessProbe:
+            exec:
+              command:
+                - node
+                - -e
+                - "require('http').get('http://127.0.0.1:18789/',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - node
+                - -e
+                - "require('http').get('http://127.0.0.1:18789/',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: openclaw-home
+              mountPath: /home/node/.openclaw
+            - name: tmp-volume
+              mountPath: /tmp
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: openclaw-home
+          persistentVolumeClaim:
+            claimName: openclaw-home-pvc
+        - name: config-template
+          configMap:
+            name: openclaw-config
+        - name: tmp-volume
+          emptyDir: {}

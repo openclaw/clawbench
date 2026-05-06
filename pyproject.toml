@@ -33,6 +33,9 @@ dev = [
     "pre-commit>=4.0,<5",
     "ruff>=0.9,<1",
 ]
+mlflow = [
+    "mlflow>=2.10,<3",
+]
 hermes = [
     "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@main",
 ]

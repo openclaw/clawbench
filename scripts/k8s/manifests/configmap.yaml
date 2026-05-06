@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clawbench-config
+  labels:
+    app: clawbench
+data:
+  CLAWBENCH_MODEL: "openai/gpt-5.5"
+  OPENAI_API_BASE: ""
+  CLAWBENCH_RUNS: "3"
+  CLAWBENCH_CONCURRENCY: "4"
+  CLAWBENCH_JUDGE_MODEL: ""
+  CLAWBENCH_TASKS: ""
+  CLAWBENCH_CONNECT_TIMEOUT: "120"
+  CLAWBENCH_REQUEST_TIMEOUT: "300"
+  CLAWBENCH_PER_RUN_BUDGET_SECONDS: "600"
+  MLFLOW_TRACKING_URI: "http://mlflow-service.mlflow.svc.cluster.local:5000"
+  MLFLOW_EXPERIMENT_NAME: "clawbench"
