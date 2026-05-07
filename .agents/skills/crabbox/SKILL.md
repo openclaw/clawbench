@@ -30,7 +30,7 @@ runner class, reusable warm state, or a Blacksmith alternative.
 AWS/owned-capacity flow for Python tests:
 
 ```sh
-crabbox warmup --idle-timeout 90m
+crabbox warmup --class standard --idle-timeout 90m
 crabbox actions hydrate --id <cbx_id-or-slug>
 crabbox run --id <cbx_id-or-slug> --timing-json --shell -- "python -m pytest -q"
 ```
@@ -55,6 +55,32 @@ Stop boxes you created before handoff:
 ```sh
 crabbox stop <cbx_id-or-slug>
 ```
+
+## Owned AWS Capacity
+
+When AWS capacity is under pressure, do not start with `class=beast`.
+`beast` begins at 48xlarge instances and can burn 192 vCPU quota per request.
+ClawBench's owned-cloud default is `standard`; escalate to `fast`, then
+`large`, and only use `beast` when the work is explicitly CPU-bound and the
+smaller class already failed the goal.
+
+Keep capacity hints enabled so brokered AWS leases print selected
+region/market, quota pressure, Spot fallback, and high-pressure class warnings.
+The ClawBench repo config sets `capacity.hints: true`; use
+`CRABBOX_CAPACITY_HINTS=0` only when debugging hint rendering itself.
+
+Use `beast` only for exceptional lanes:
+
+- full benchmark sweeps where wall time is dominated by CPU, not dependency
+  install or network;
+- release/blocker validation where a maintainer explicitly asks for the largest
+  owned AWS class;
+- performance profiling where the point is to compare high-core behavior.
+
+Do not use `beast` for ordinary `python -m pytest -q`, docs-only work, small
+task repros, Blacksmith outage triage, or focused lint/type/test checks. Those
+should use `standard` first and `fast` only when the extra cores materially
+help.
 
 ## Useful Commands
 
