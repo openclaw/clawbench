@@ -46,7 +46,9 @@ def test_crabbox_workflow_hydrates_secrets_dotfiles_and_ready_marker():
     assert "OPENCLAW_CODEX_AUTH_JSON" in workflow
     assert "CLAWBENCH_CODEX_AUTH_JSON" in workflow
     assert "/usr/local/bin/clawbench-testbox-env" in workflow
-    assert "$HOME/.crabbox/actions/${{ inputs.crabbox_id }}.env" in workflow
+    assert "CRABBOX_ID: ${{ inputs.crabbox_id }}" in workflow
+    assert "Invalid crabbox_id" in workflow
+    assert "$HOME/.crabbox/actions/${CRABBOX_ID}.env" in workflow
     assert "crabbox_keep_alive_minutes" in workflow
 
 
