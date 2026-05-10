@@ -38,6 +38,40 @@ def test_gateway_config_invalid_env_falls_back_to_default(monkeypatch, caplog, r
     assert any("CLAWBENCH_CONNECT_TIMEOUT" in r.getMessage() for r in caplog.records)
 
 
+@pytest.mark.asyncio
+async def test_gateway_client_advertises_protocol_v4_compat(monkeypatch: pytest.MonkeyPatch):
+    connect_params: dict[str, object] = {}
+
+    class FakeWebSocket:
+        async def close(self) -> None:
+            return None
+
+    async def fake_connect(*args, **kwargs):
+        return FakeWebSocket()
+
+    async def fake_wait_event(self, event_name: str, *, timeout: float):
+        return {"payload": {"nonce": ""}}
+
+    async def fake_rpc(self, method: str, params=None, **kwargs):
+        connect_params.update(params or {})
+        return {"payload": {"type": "hello-ok", "protocol": 4}}
+
+    async def fake_listener(self):
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr("clawbench.client.websockets.connect", fake_connect)
+    monkeypatch.setattr(GatewayClient, "_wait_event", fake_wait_event)
+    monkeypatch.setattr(GatewayClient, "_rpc", fake_rpc)
+    monkeypatch.setattr(GatewayClient, "_listener", fake_listener)
+
+    client = GatewayClient(GatewayConfig(connect_timeout=2))
+    await client.connect()
+    await client.close()
+
+    assert connect_params["minProtocol"] == 3
+    assert connect_params["maxProtocol"] == 4
+
+
 def test_tool_results_are_correlated_back_to_tool_calls():
     tool_message = _parse_single_message(
         {
@@ -62,6 +96,74 @@ def test_tool_results_are_correlated_back_to_tool_calls():
     assert call.output == "ERROR failed test"
     assert call.success is False
     assert call.error == "ERROR failed test"
+
+
+def test_parser_accepts_codex_tool_search_output_shape():
+    tool_message = _parse_single_message(
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_search_call",
+                    "call_id": "search-1",
+                    "name": "tool_search",
+                    "arguments": {"query": "message"},
+                },
+                {
+                    "type": "functionCall",
+                    "callId": "call-1",
+                    "name": "message",
+                    "arguments": '{"text":"hello"}',
+                },
+            ],
+        }
+    )
+    result_message = _parse_single_message(
+        {
+            "role": "toolResult",
+            "toolCallId": "call-1",
+            "content": [
+                {
+                    "type": "toolSearchOutput",
+                    "callId": "search-1",
+                    "output": [{"text": "message: send a message"}],
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-1",
+                    "output": "sent",
+                },
+            ],
+        }
+    )
+
+    transcript = _correlate_transcript(Transcript(messages=[tool_message, result_message]))  # type: ignore[arg-type]
+
+    assert [call.name for call in transcript.tool_call_sequence] == ["tool_search", "message"]
+    assert transcript.tool_call_sequence[0].output == "message: send a message"
+    assert transcript.tool_call_sequence[1].output == "sent"
+    assert transcript.tool_call_sequence[1].success is True
+
+
+def test_parser_correlates_plain_top_level_tool_result_message():
+    tool_message = _parse_single_message(
+        {
+            "role": "assistant",
+            "content": [{"type": "toolUse", "id": "call-1", "name": "read", "input": {}}],
+        }
+    )
+    result_message = _parse_single_message(
+        {
+            "role": "toolResult",
+            "toolUseId": "call-1",
+            "content": "file contents",
+        }
+    )
+
+    transcript = _correlate_transcript(Transcript(messages=[tool_message, result_message]))  # type: ignore[arg-type]
+
+    assert transcript.tool_call_sequence[0].output == "file contents"
+    assert transcript.tool_call_sequence[0].success is True
 
 
 def test_message_usage_is_parsed_into_transcript_usage():
