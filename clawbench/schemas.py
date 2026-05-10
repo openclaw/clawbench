@@ -135,6 +135,13 @@ class ToolCall(BaseModel):
     error: str = ""
 
 
+class ToolResult(BaseModel):
+    """A single tool result extracted from the transcript."""
+
+    id: str
+    content: str = ""
+
+
 class TokenUsage(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
@@ -184,6 +191,7 @@ class TranscriptMessage(BaseModel):
     role: str
     text: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
+    tool_results: list[ToolResult] = Field(default_factory=list)
     tool_result_for: str | None = None
     tool_result_content: str = ""
     timestamp_ms: int = 0

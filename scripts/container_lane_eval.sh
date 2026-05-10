@@ -11,6 +11,7 @@ set -Eeuo pipefail
 : "${CLAWBENCH_PER_RUN_BUDGET_SECONDS:=900}"
 : "${CLAWBENCH_PER_TURN_TIMEOUT_SECONDS:=300}"
 : "${OPENCLAW_EXEC_HOST:=gateway}"
+: "${CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING:=searchable}"
 
 cd /home/node/app
 export CLAWBENCH_LOCAL_QUEUE_DIR="${CLAWBENCH_LOCAL_QUEUE_DIR:-/data/queue/$SWEEP_LABEL}"
@@ -59,6 +60,16 @@ if [ -d "$SRC_STATE/plugins" ]; then
   mkdir -p "$FRESH_STATE/plugins"
   cp -R "$SRC_STATE/plugins/." "$FRESH_STATE/plugins/" 2>/dev/null || true
 fi
+CODEX_STATE_SOURCE="${CODEX_CONFIG_SOURCE:-/config/codex}"
+if [ -d "$CODEX_STATE_SOURCE" ]; then
+  mkdir -p "$FRESH_HOME/.codex"
+  for codex_file in auth.json config.toml; do
+    if [ -f "$CODEX_STATE_SOURCE/$codex_file" ]; then
+      cp "$CODEX_STATE_SOURCE/$codex_file" "$FRESH_HOME/.codex/$codex_file"
+      chmod 600 "$FRESH_HOME/.codex/$codex_file" 2>/dev/null || true
+    fi
+  done
+fi
 mkdir -p \
   "$FRESH_STATE/agents" \
   "$FRESH_STATE/workspace" \
@@ -77,6 +88,18 @@ export OPENCLAW_HOME="$FRESH_HOME"
 export OPENCLAW_STATE_DIR="$FRESH_STATE"
 export OPENCLAW_CONFIG_PATH="$FRESH_STATE/openclaw.json"
 export XDG_CONFIG_HOME="$FRESH_HOME/.config"
+SWEEP_AGENT_RUNTIME="${SWEEP_AGENT_RUNTIME:-${CLAWBENCH_OPENCLAW_AGENT_RUNTIME:-${OPENCLAW_AGENT_RUNTIME:-}}}"
+if [ -n "$SWEEP_AGENT_RUNTIME" ]; then
+  export OPENCLAW_AGENT_RUNTIME="$SWEEP_AGENT_RUNTIME"
+  export CLAWBENCH_OPENCLAW_AGENT_RUNTIME="$SWEEP_AGENT_RUNTIME"
+fi
+case "$SWEEP_MODEL:${SWEEP_AGENT_RUNTIME:-}" in
+  *:codex|codex/*)
+    export OPENCLAW_CODEX_APP_SERVER_MODE="${OPENCLAW_CODEX_APP_SERVER_MODE:-yolo}"
+    export OPENCLAW_CODEX_APP_SERVER_APPROVAL_POLICY="${OPENCLAW_CODEX_APP_SERVER_APPROVAL_POLICY:-never}"
+    export OPENCLAW_CODEX_APP_SERVER_SANDBOX="${OPENCLAW_CODEX_APP_SERVER_SANDBOX:-danger-full-access}"
+    ;;
+esac
 
 python - <<'PY'
 import json
@@ -98,6 +121,54 @@ def set_nested(root, dotted, value):
             cursor[part] = child
         cursor = child
     cursor[parts[-1]] = value
+
+
+def set_model_agent_runtime_policy(root, model_ref, agent_runtime):
+    agents = root.setdefault("agents", {})
+    if not isinstance(agents, dict):
+        return
+    defaults = agents.setdefault("defaults", {})
+    if not isinstance(defaults, dict):
+        return
+    models = defaults.setdefault("models", {})
+    if not isinstance(models, dict):
+        return
+    model_cfg = models.setdefault(model_ref, {})
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+        models[model_ref] = model_cfg
+    model_cfg["agentRuntime"] = {"id": agent_runtime}
+    if agent_runtime == "codex":
+        plugins_cfg = root.setdefault("plugins", {})
+        if isinstance(plugins_cfg, dict):
+            allow = plugins_cfg.get("allow")
+            if isinstance(allow, list) and "codex" not in allow:
+                allow.append("codex")
+
+
+def ensure_codex_dynamic_tools_config(root, loading):
+    if loading not in {"searchable", "direct"}:
+        raise SystemExit(f"invalid CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING={loading!r}")
+    plugins_cfg = root.setdefault("plugins", {})
+    if not isinstance(plugins_cfg, dict):
+        return
+    allow = plugins_cfg.setdefault("allow", [])
+    if isinstance(allow, list) and "codex" not in allow:
+        allow.append("codex")
+    entries = plugins_cfg.setdefault("entries", {})
+    if not isinstance(entries, dict):
+        entries = {}
+        plugins_cfg["entries"] = entries
+    codex = entries.setdefault("codex", {})
+    if not isinstance(codex, dict):
+        codex = {}
+        entries["codex"] = codex
+    config = codex.setdefault("config", {})
+    if not isinstance(config, dict):
+        config = {}
+        codex["config"] = config
+    config["codexDynamicToolsLoading"] = loading
+
 
 agents = data.setdefault("agents", {})
 if isinstance(agents, dict):
@@ -143,9 +214,19 @@ set_nested(data, "tools.exec.host", os.environ.get("OPENCLAW_EXEC_HOST", "gatewa
 set_nested(data, "tools.exec.security", "full")
 set_nested(data, "tools.exec.ask", "off")
 set_nested(data, "approvals.exec.enabled", False)
+model_ref = os.environ["SWEEP_MODEL"].strip()
+agent_runtime = os.environ.get("SWEEP_AGENT_RUNTIME", "").strip()
+if agent_runtime:
+    set_nested(data, "agents.defaults.agentRuntime.id", agent_runtime)
+    set_model_agent_runtime_policy(data, model_ref, agent_runtime)
+if agent_runtime == "codex" or model_ref.startswith("codex/"):
+    ensure_codex_dynamic_tools_config(
+        data,
+        os.environ.get("CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING", "searchable").strip(),
+    )
 
 models = data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("models", {})
-model_entry = models.setdefault(os.environ["SWEEP_MODEL"], {})
+model_entry = models.setdefault(model_ref, {})
 params = model_entry.setdefault("params", {})
 params["fastMode"] = True
 if os.environ["SWEEP_MODEL"].startswith("openai/"):
@@ -170,6 +251,8 @@ PY
 echo "===== CONTAINER LANE EVAL START $(date '+%Y-%m-%d %H:%M:%S') ====="
 echo "label:    $SWEEP_LABEL"
 echo "model:    $SWEEP_MODEL"
+echo "runtime:  ${SWEEP_AGENT_RUNTIME:-default}"
+echo "codex dynamic tools: ${CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING:-default}"
 echo "runs:     $SWEEP_RUNS"
 echo "lanes:    $SWEEP_LANES"
 echo "tasks:    ${SWEEP_TASKS:-${CHERRY_TASKS:-all}}"
