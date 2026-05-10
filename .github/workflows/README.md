@@ -17,24 +17,35 @@ GitHub-hosted `ubuntu-latest`.
 
 ## `ci-check-testbox.yml` — Blacksmith Testbox warmup
 
-This workflow exists for the Blacksmith CLI:
+This workflow exists for Crabbox's default `blacksmith-testbox` backend and
+for the direct Blacksmith fallback when Crabbox itself is broken:
 
 ```bash
-blacksmith testbox warmup ci-check-testbox.yml --ref main --idle-timeout 90
-blacksmith testbox run --id <tbx_id> "python -m pytest -q"
+crabbox run --provider blacksmith-testbox \
+  --blacksmith-org openclaw \
+  --blacksmith-workflow .github/workflows/ci-check-testbox.yml \
+  --blacksmith-job check \
+  --blacksmith-ref main \
+  --idle-timeout 90m \
+  --timing-json \
+  --shell -- \
+  "python -m pytest -q"
 ```
 
 It installs ClawBench, hydrates provider/HF secrets into
 `~/.clawbench-testbox-live.profile`, restores optional Codex/Claude/Gemini
 dotfiles from repo or org secrets, and installs
 `~/.local/bin/clawbench-testbox-env` for commands that need that live auth.
+Use direct `blacksmith testbox ...` commands only when Crabbox cannot dispatch,
+sync, attach, or stop but Blacksmith itself still works.
 
 ## `crabbox-hydrate.yml` — Crabbox Actions hydration
 
-This workflow exists for the Crabbox CLI from `openclaw/crabbox`:
+This workflow exists for the Crabbox owned-AWS fallback from
+`openclaw/crabbox`:
 
 ```bash
-crabbox warmup --idle-timeout 90m
+crabbox warmup --provider aws --class standard --idle-timeout 90m
 crabbox actions hydrate --id <cbx_id-or-slug>
 crabbox run --id <cbx_id-or-slug> --shell -- "python -m pytest -q"
 ```
@@ -43,7 +54,9 @@ It runs on the dynamic self-hosted runner label registered by Crabbox, installs
 ClawBench, hydrates the same provider/HF secrets and agent dotfiles as the
 Blacksmith Testbox workflow, writes the Crabbox ready marker under
 `~/.crabbox/actions/`, and keeps the job alive for follow-up SSH sync/run
-commands.
+commands. Normal broad maintainer validation should use the `blacksmith-testbox`
+provider instead; keep owned AWS for Blacksmith outages, missing environment, or
+explicit owned-capacity work.
 
 ## `sync-to-hf-space.yml` — auto-mirror main to the HF Space
 

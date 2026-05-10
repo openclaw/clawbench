@@ -55,9 +55,17 @@ def test_crabbox_skill_documents_clawbench_flow():
 
     assert "openclaw/crabbox" in skill
     assert ".crabbox.yaml" in skill
+    assert "Default backend: `blacksmith-testbox`" in skill
+    assert "separate `blacksmith-testbox` skill" in skill
+    assert "crabbox run --provider blacksmith-testbox" in skill
     assert "crabbox actions hydrate" in skill
     assert "clawbench-testbox-env" in skill
     assert ".github/workflows/crabbox-hydrate.yml" in skill
+    assert "blacksmith testbox warmup ci-check-testbox.yml" in skill
+
+
+def test_blacksmith_rules_live_in_crabbox_skill():
+    assert not Path(".agents/skills/blacksmith-testbox/SKILL.md").exists()
 
 
 def test_testbox_helper_sources_hydrated_profile():
