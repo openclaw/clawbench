@@ -178,6 +178,33 @@ case "$SWEEP_MODEL" in
     ;;
 esac
 
+provider_auth_missing() {
+  local provider="$1"
+  local env_hint="$2"
+  cat >&2 <<EOF
+Missing provider auth for SWEEP_MODEL=$SWEEP_MODEL ($provider).
+Set $env_hint in the container environment. For Docker runs, pass the
+provider variable explicitly, e.g. "docker run -e $env_hint ..."; with
+Testbox, run through "clawbench-testbox-env docker run -e $env_hint ...".
+Set CLAWBENCH_ALLOW_MISSING_PROVIDER_AUTH=1 only for control-plane smoke tests.
+EOF
+  exit 78
+}
+
+if [ "${CLAWBENCH_ALLOW_MISSING_PROVIDER_AUTH:-}" != "1" ]; then
+  case "$SWEEP_MODEL" in
+    openai/*)
+      [ -n "${OPENAI_API_KEY:-}" ] || provider_auth_missing "openai" "OPENAI_API_KEY"
+      ;;
+    openrouter/*)
+      [ -n "${OPENROUTER_API_KEY:-}" ] || provider_auth_missing "openrouter" "OPENROUTER_API_KEY"
+      ;;
+    anthropic/*|claude/*)
+      [ -n "${ANTHROPIC_API_KEY:-${ANTHROPIC_API_TOKEN:-}}" ] || provider_auth_missing "anthropic" "ANTHROPIC_API_KEY"
+      ;;
+  esac
+fi
+
 python - <<'PY'
 import json
 import os
