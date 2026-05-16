@@ -4,7 +4,7 @@ from pathlib import Path
 def test_public_dockerfiles_copy_public_task_sets():
     repo_root = Path(__file__).resolve().parent.parent
 
-    for dockerfile_name in ("Dockerfile", "Dockerfile.main"):
+    for dockerfile_name in ("Dockerfile", "Dockerfile.main", "Dockerfile.clawbench-426-agent-hotfix"):
         dockerfile = repo_root / dockerfile_name
         contents = dockerfile.read_text(encoding="utf-8")
 
