@@ -119,6 +119,8 @@ rm -rf "$FRESH_HOME" "$CLAWBENCH_PARALLEL_LANE_ROOT"
 mkdir -p "$FRESH_STATE" "$FRESH_HOME/.config"
 if [ -f "$SRC_STATE/openclaw.json" ]; then
   cp "$SRC_STATE/openclaw.json" "$FRESH_STATE/openclaw.json"
+else
+  printf '{}\n' > "$FRESH_STATE/openclaw.json"
 fi
 if [ -d "$SRC_STATE/plugins" ]; then
   mkdir -p "$FRESH_STATE/plugins"
