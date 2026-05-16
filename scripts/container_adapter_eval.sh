@@ -51,6 +51,40 @@ export HERMES_MAX_ITERATIONS
 export HERMES_STEP_TIMEOUT_SECONDS
 export TERMINAL_ENV="${TERMINAL_ENV:-local}"
 
+write_eval_exec_approvals() {
+  python - "$FRESH_STATE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state_dir = Path(sys.argv[1])
+state_dir.mkdir(parents=True, exist_ok=True)
+approvals_path = state_dir / "exec-approvals.json"
+approvals = {
+    "version": 1,
+    "socket": {
+        "path": str(approvals_path.with_suffix(".sock")),
+        "token": "container-eval-token",
+    },
+    "defaults": {
+        "security": "full",
+        "ask": "off",
+        "askFallback": "full",
+    },
+    "agents": {
+        "*": {
+            "security": "full",
+            "ask": "off",
+            "askFallback": "full",
+        }
+    },
+}
+tmp_path = approvals_path.with_suffix(".json.tmp")
+tmp_path.write_text(json.dumps(approvals, indent=2) + "\n", encoding="utf-8")
+tmp_path.replace(approvals_path)
+PY
+}
+
 safe_model="${SWEEP_MODEL//\//_}"
 safe_model="${safe_model//:/_}"
 safe_label="${SWEEP_LABEL//\//_}"
@@ -295,6 +329,9 @@ set_nested(data, "tools.exec.host", exec_host)
 set_nested(data, "tools.exec.security", "full")
 set_nested(data, "tools.exec.ask", "off")
 set_nested(data, "approvals.exec.enabled", False)
+if parse_optional_bool_env("CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY") is not False:
+    set_nested(data, "gateway.controlUi.allowInsecureAuth", True)
+    set_nested(data, "gateway.controlUi.dangerouslyDisableDeviceAuth", True)
 model = os.environ.get("SWEEP_MODEL", "").strip()
 if model:
     set_nested(data, "agents.defaults.model.primary", model)
@@ -324,29 +361,8 @@ if tool_search_enabled is not None:
 tmp_path = cfg_path.with_suffix(".json.tmp")
 tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 tmp_path.replace(cfg_path)
-
-approvals_path = cfg_path.with_name("exec-approvals.json")
-approvals = {
-    "version": 1,
-    "socket": {
-        "path": str(approvals_path.with_suffix(".sock")),
-        "token": "container-eval-token",
-    },
-    "defaults": {
-        "security": "full",
-        "ask": "off",
-        "askFallback": "full",
-    },
-    "agents": {
-        "*": {
-            "security": "full",
-            "ask": "off",
-            "askFallback": "full",
-        }
-    },
-}
-approvals_path.write_text(json.dumps(approvals, indent=2), encoding="utf-8")
 PY
+write_eval_exec_approvals || exit 1
 
 if [ "$SWEEP_ADAPTER" = "hermes" ]; then
 python - <<'PY'
@@ -499,6 +515,9 @@ if [ "$SWEEP_ADAPTER" = "openclaw" ]; then
     tail -80 "$GWLOG" 2>/dev/null || true
     exit 1
   fi
+  # OpenClaw's dev gateway normalizes state during startup and may rewrite
+  # exec approval defaults. Reassert the eval-local approval socket after boot.
+  write_eval_exec_approvals || exit 1
   if [ -r "/proc/$GATEWAY_PID/environ" ]; then
     actual_home="$(tr '\0' '\n' < "/proc/$GATEWAY_PID/environ" | awk -F= '$1 == "HOME" { print $2; exit }')"
     if [ "$actual_home" != "$FRESH_HOME" ]; then

@@ -41,6 +41,30 @@ if command -v npm >/dev/null 2>&1; then
   export NODE_PATH="${NODE_PATH:-$(npm root -g 2>/dev/null || true)}"
 fi
 
+write_eval_exec_approvals() {
+  python - "$FRESH_STATE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state_dir = Path(sys.argv[1])
+state_dir.mkdir(parents=True, exist_ok=True)
+approvals_path = state_dir / "exec-approvals.json"
+approvals = {
+    "version": 1,
+    "socket": {
+        "path": str(approvals_path.with_suffix(".sock")),
+        "token": "container-lane-eval-token",
+    },
+    "defaults": {"security": "full", "ask": "off", "askFallback": "full"},
+    "agents": {"*": {"security": "full", "ask": "off", "askFallback": "full"}},
+}
+tmp_path = approvals_path.with_suffix(".json.tmp")
+tmp_path.write_text(json.dumps(approvals, indent=2) + "\n", encoding="utf-8")
+tmp_path.replace(approvals_path)
+PY
+}
+
 if [ -n "${CLAWBENCH_TASK_TIMEOUT_SCALE:-}" ] && [ "${CLAWBENCH_TASK_TIMEOUT_SCALE:-1}" != "1" ] && [ "${CLAWBENCH_TASK_TIMEOUT_SCALE:-1.0}" != "1.0" ]; then
   SOURCE_TASKS_DIR="${CLAWBENCH_TASKS_DIR:-/tasks}"
   SCALED_TASKS_DIR="/tmp/clawbench-tasks-scaled-${SWEEP_LABEL}-$$"
@@ -437,19 +461,8 @@ if model_ref.startswith("openrouter/") and len(model_ref.split("/", 1)) == 2:
                 model_entries.append(desired_model)
 
 cfg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-approvals_path = cfg_path.with_name("exec-approvals.json")
-approvals = {
-    "version": 1,
-    "socket": {
-        "path": str(approvals_path.with_suffix(".sock")),
-        "token": "container-lane-eval-token",
-    },
-    "defaults": {"security": "full", "ask": "off", "askFallback": "full"},
-    "agents": {"*": {"security": "full", "ask": "off", "askFallback": "full"}},
-}
-approvals_path.write_text(json.dumps(approvals, indent=2) + "\n", encoding="utf-8")
 PY
+write_eval_exec_approvals
 
 if [ "${CLAWBENCH_ENABLE_GBRAIN:-0}" = "1" ]; then
   export CLAWBENCH_LANE_PREPARE_CMD="${CLAWBENCH_LANE_PREPARE_CMD:-/home/node/app/scripts/setup_gbrain_runtime.sh}"

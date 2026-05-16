@@ -904,6 +904,10 @@ class EvalWorker:
             log_reader=lambda: self._read_gateway_log(limit=20_000),
             description="Gateway",
         )
+        # The dev gateway normalizes OpenClaw state during startup and may
+        # rewrite exec approval defaults. Reassert the eval-local approval
+        # socket before any session/control-plane work can spawn tools.
+        self._write_eval_exec_approvals(Path(gateway_env["OPENCLAW_STATE_DIR"]))
 
         # Phase B: control-plane probe with retries (see the parallel
         # variant in _ensure_parallel_gateway for the detailed rationale).
@@ -1043,6 +1047,7 @@ class EvalWorker:
             log_reader=lambda: self._read_parallel_gateway_log(lane, limit=20_000),
             description=f"Lane {lane.index + 1} gateway",
         )
+        self._write_eval_exec_approvals(lane.state_dir)
 
         # Phase B: control-plane probe with explicit retries. A healthy
         # /health response does not guarantee sessions.create works

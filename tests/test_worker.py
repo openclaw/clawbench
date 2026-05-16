@@ -49,8 +49,23 @@ def test_configure_browser_runtime_sets_benchmark_safe_openclaw_config(monkeypat
         "approvals": {"exec": {"enabled": False}},
     }
     approvals = json.loads((state_dir / "exec-approvals.json").read_text(encoding="utf-8"))
+    assert approvals["socket"]["path"] == str(state_dir / "exec-approvals.sock")
     assert approvals["defaults"] == {"security": "full", "ask": "off", "askFallback": "full"}
     assert approvals["agents"]["*"] == {"security": "full", "ask": "off", "askFallback": "full"}
+
+
+def test_write_eval_exec_approvals_replaces_gateway_defaults(tmp_path: Path):
+    approvals_path = tmp_path / "exec-approvals.json"
+    approvals_path.write_text(
+        json.dumps({"socket": {"path": "/home/node/.openclaw/exec-approvals.sock"}}),
+        encoding="utf-8",
+    )
+
+    EvalWorker._write_eval_exec_approvals(tmp_path)
+
+    approvals = json.loads(approvals_path.read_text(encoding="utf-8"))
+    assert approvals["socket"]["path"] == str(tmp_path / "exec-approvals.sock")
+    assert approvals["defaults"] == {"security": "full", "ask": "off", "askFallback": "full"}
 
 
 def test_configure_browser_runtime_pins_subagents_to_active_model(monkeypatch):
@@ -350,6 +365,7 @@ def test_materialize_lane_runtime_spaces_ports_and_copies_auth(tmp_path: Path, m
     assert lane_cfg["tools"]["exec"] == {"host": "gateway", "security": "full", "ask": "off"}
     assert lane_cfg["approvals"]["exec"] == {"enabled": False}
     lane_approvals = json.loads((lane1.state_dir / "exec-approvals.json").read_text(encoding="utf-8"))
+    assert lane_approvals["socket"]["path"] == str(lane1.state_dir / "exec-approvals.sock")
     assert lane_approvals["defaults"] == {"security": "full", "ask": "off", "askFallback": "full"}
 
 
