@@ -107,7 +107,20 @@ def test_configure_browser_runtime_sets_requested_agent_runtime(monkeypatch):
         shutil.rmtree(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     config_path = state_dir / "openclaw.json"
-    config_path.write_text("{}", encoding="utf-8")
+    config_path.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "defaults": {
+                        "models": {
+                            "openai/gpt-5.5": {"agentRuntime": {"id": "codex"}}
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
     monkeypatch.setenv("CLAWBENCH_OPENCLAW_AGENT_RUNTIME", "codex")
 
@@ -115,7 +128,8 @@ def test_configure_browser_runtime_sets_requested_agent_runtime(monkeypatch):
 
     data = json.loads(config_path.read_text(encoding="utf-8"))
     assert data["agents"]["defaults"]["agentRuntime"]["id"] == "codex"
-    assert data["agents"]["defaults"]["models"]["openai/gpt-5.5"]["agentRuntime"]["id"] == "codex"
+    models = data["agents"]["defaults"].get("models", {})
+    assert "agentRuntime" not in models.get("openai/gpt-5.5", {})
 
 
 def test_configure_browser_runtime_strips_source_agent_runtime_when_unset(monkeypatch):

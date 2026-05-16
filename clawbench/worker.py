@@ -1230,14 +1230,12 @@ class EvalWorker:
         defaults = agents.setdefault("defaults", {})
         if not isinstance(defaults, dict):
             return
-        models = defaults.setdefault("models", {})
+        models = defaults.get("models")
         if not isinstance(models, dict):
-            return
-        model_cfg = models.setdefault(model_ref, {})
-        if not isinstance(model_cfg, dict):
-            model_cfg = {}
-            models[model_ref] = model_cfg
-        model_cfg["agentRuntime"] = {"id": agent_runtime}
+            models = {}
+        for model_cfg in models.values():
+            if isinstance(model_cfg, dict):
+                model_cfg.pop("agentRuntime", None)
 
         if agent_runtime == "codex":
             plugins = data.setdefault("plugins", {})
