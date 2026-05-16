@@ -251,6 +251,11 @@ class CanonicalTask(BaseModel):
     trace_distribution: list[str] = Field(default_factory=list)
     tool_surface: list[str] = Field(default_factory=list)
     risk_tags: list[str] = Field(default_factory=list)
+    surfaces: list[str] = Field(default_factory=list)
+    turn_count: int = 0
+    artifact_count: int = 0
+    statefulness: str = ""
+    evidence_risk: str = ""
     first_used_at: str = ""
     retire_after_runs: int = 0
     similarity_hash: str = ""

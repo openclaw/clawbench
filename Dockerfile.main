@@ -8,6 +8,7 @@ ARG BASE=openclaw-main-opus47:latest
 FROM ${BASE}
 
 USER root
+ARG CODEX_CLI_VERSION=0.129.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
@@ -23,6 +24,8 @@ RUN npm install -g playwright@1.59.1 && \
     CHROME_PATH="$(find /ms-playwright -path '*/chrome' -type f | sort | head -n 1)" && \
     test -x "$CHROME_PATH" && \
     ln -sf "$CHROME_PATH" /usr/bin/chromium
+RUN npm install -g @openai/codex@${CODEX_CLI_VERSION} && \
+    codex --version
 
 ENV HOME=/home/node PATH=/home/node/.local/bin:$PATH
 WORKDIR /home/node/app

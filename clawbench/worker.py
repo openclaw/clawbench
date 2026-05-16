@@ -37,6 +37,48 @@ STALE_EVALUATION_SECONDS = max(
 OPENCLAW_EVAL_EXEC_HOSTS = {"auto", "gateway", "sandbox", "node"}
 
 
+def _serialize_browser_lanes_enabled() -> bool:
+    return os.environ.get("CLAWBENCH_SERIALIZE_BROWSER_LANES", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def _openclaw_legacy_config_enabled() -> bool:
+    return os.environ.get("CLAWBENCH_OPENCLAW_LEGACY_CONFIG", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _disable_gateway_device_identity_enabled() -> bool:
+    return os.environ.get("CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _set_nested(data: dict, path: str, value: object) -> bool:
+    parts = path.split(".")
+    cursor = data
+    for part in parts[:-1]:
+        child = cursor.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            cursor[part] = child
+        cursor = child
+    if cursor.get(parts[-1]) == value:
+        return False
+    cursor[parts[-1]] = value
+    return True
+
+
 @dataclass
 class ParallelLane:
     index: int
@@ -469,7 +511,9 @@ class EvalWorker:
         effective_lanes = max(1, min(requested_parallel_lanes, len(tasks)))
         browser_tasks = [task for task in tasks if task.family.value == "browser"]
         other_tasks = [task for task in tasks if task.family.value != "browser"]
-        dedicate_browser_lane = bool(browser_tasks) and effective_lanes > 1
+        dedicate_browser_lane = (
+            _serialize_browser_lanes_enabled() and bool(browser_tasks) and effective_lanes > 1
+        )
 
         worker_lane_count = max(1, effective_lanes - (1 if dedicate_browser_lane else 0))
         lanes = [ParallelLane(index=index) for index in range(worker_lane_count)]
@@ -520,9 +564,34 @@ class EvalWorker:
         lane_home = lane.home_dir
         if lane_home is not None:
             (lane_home / ".config").mkdir(parents=True, exist_ok=True)
+            self._seed_lane_codex_home(lane_home)
         lane.log_path = lane_root / "gateway.log"
         lane.port = GATEWAY_PORT + (lane.index * GATEWAY_PORT_SPACING)
         self._seed_lane_state_dir(lane.state_dir)
+
+    def _seed_lane_codex_home(self, lane_home: Path) -> None:
+        configured_source = os.environ.get("CODEX_CONFIG_SOURCE", "").strip()
+        candidates = []
+        if configured_source:
+            candidates.append(Path(configured_source))
+        candidates.append(Path(os.environ.get("HOME", os.path.expanduser("~"))) / ".codex")
+
+        source = next((candidate for candidate in candidates if candidate.exists()), None)
+        if source is None or not source.is_dir():
+            return
+
+        target = lane_home / ".codex"
+        target.mkdir(parents=True, exist_ok=True)
+        for name in ("auth.json", "config.toml"):
+            src = source / name
+            if not src.is_file():
+                continue
+            dst = target / name
+            shutil.copy2(src, dst)
+            try:
+                dst.chmod(0o600)
+            except OSError:
+                pass
 
     def _run_lane_prepare_hook(self, lane: ParallelLane) -> None:
         hook = os.environ.get("CLAWBENCH_LANE_PREPARE_CMD", "").strip()
@@ -631,18 +700,30 @@ class EvalWorker:
             return
 
         # 1. Disable chat channels so the gateway doesn't try to connect to
-        #    Telegram/Discord/Slack on startup (they thrash when 4 lanes share one token).
+        #    Telegram/Discord/Slack on startup (they thrash when lanes share one token).
+        #    WhatsApp config from older local state is rejected by newer OpenClaw schemas,
+        #    so drop it entirely from benchmark lane state.
         channels = data.get("channels")
         if isinstance(channels, dict):
+            channels.pop("whatsapp", None)
+            legacy_config = _openclaw_legacy_config_enabled()
             for channel_name in ("telegram", "discord", "slack"):
                 channel = channels.get(channel_name)
-                if isinstance(channel, dict) and channel.get("enabled") is not False:
+                if isinstance(channel, dict):
                     channel["enabled"] = False
+                    if legacy_config:
+                        channel["streaming"] = "off"
+                    else:
+                        streaming = channel.get("streaming")
+                        if isinstance(streaming, dict):
+                            streaming["mode"] = "off"
+                        else:
+                            channel["streaming"] = {"mode": "off"}
 
         # 2. Drop stale plugins that emit config warnings and slow gateway boot.
         plugins = data.get("plugins")
         if isinstance(plugins, dict):
-            stale_plugins = {"marxbiotech-git-tools"}
+            stale_plugins = {"marxbiotech-git-tools", "whatsapp"}
             allow = plugins.get("allow")
             if isinstance(allow, list):
                 plugins["allow"] = [p for p in allow if p not in stale_plugins]
@@ -669,9 +750,21 @@ class EvalWorker:
         _set_nested(data, "tools.exec.security", "full")
         _set_nested(data, "tools.exec.ask", "off")
         _set_nested(data, "approvals.exec.enabled", False)
+        if _disable_gateway_device_identity_enabled():
+            _set_nested(data, "gateway.controlUi.allowInsecureAuth", True)
+            _set_nested(data, "gateway.controlUi.dangerouslyDisableDeviceAuth", True)
+        agent_runtime = self._openclaw_agent_runtime()
+        if agent_runtime:
+            _set_nested(data, "agents.defaults.agentRuntime.id", agent_runtime)
+        else:
+            self._strip_agent_runtime_policy(data)
+            self._sanitize_non_codex_plugins(data)
         if self._active_model:
             _set_nested(data, "agents.defaults.model.primary", self._active_model)
             _set_nested(data, "agents.defaults.subagents.model.primary", self._active_model)
+            self._ensure_openrouter_provider_config(data, self._active_model)
+            if agent_runtime:
+                self._set_model_agent_runtime_policy(data, self._active_model, agent_runtime)
 
         tmp_path = cfg_path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -1067,6 +1160,13 @@ class EvalWorker:
             ("tools.exec.ask", "off"),
             ("approvals.exec.enabled", False),
         ]
+        if _disable_gateway_device_identity_enabled():
+            config_pairs.extend(
+                [
+                    ("gateway.controlUi.allowInsecureAuth", True),
+                    ("gateway.controlUi.dangerouslyDisableDeviceAuth", True),
+                ]
+            )
         if self._active_model:
             config_pairs.extend(
                 [
@@ -1074,8 +1174,16 @@ class EvalWorker:
                     ("agents.defaults.subagents.model.primary", self._active_model),
                 ]
             )
+        agent_runtime = self._openclaw_agent_runtime()
+        if agent_runtime:
+            config_pairs.append(("agents.defaults.agentRuntime.id", agent_runtime))
         try:
-            self._patch_openclaw_config(config_pairs)
+            self._patch_openclaw_config(
+                config_pairs,
+                strip_agent_runtime=not bool(agent_runtime),
+            )
+            if self._active_model and agent_runtime:
+                self._patch_openclaw_model_runtime(self._active_model, agent_runtime)
             state_dir = Path(
                 gateway_env.get("OPENCLAW_STATE_DIR")
                 or os.environ.get("OPENCLAW_STATE_DIR")
@@ -1092,6 +1200,92 @@ class EvalWorker:
             return value
         logger.warning("Invalid OPENCLAW_EXEC_HOST=%r; using gateway", value)
         return "gateway"
+
+    @staticmethod
+    def _openclaw_agent_runtime() -> str:
+        if _openclaw_legacy_config_enabled():
+            return ""
+        return (
+            os.environ.get("CLAWBENCH_OPENCLAW_AGENT_RUNTIME")
+            or os.environ.get("OPENCLAW_AGENT_RUNTIME")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _set_model_agent_runtime_policy(
+        data: dict,
+        model_ref: str,
+        agent_runtime: str,
+    ) -> None:
+        if _openclaw_legacy_config_enabled():
+            return
+        agents = data.setdefault("agents", {})
+        if not isinstance(agents, dict):
+            return
+        defaults = agents.setdefault("defaults", {})
+        if not isinstance(defaults, dict):
+            return
+        models = defaults.setdefault("models", {})
+        if not isinstance(models, dict):
+            return
+        model_cfg = models.setdefault(model_ref, {})
+        if not isinstance(model_cfg, dict):
+            model_cfg = {}
+            models[model_ref] = model_cfg
+        model_cfg["agentRuntime"] = {"id": agent_runtime}
+
+        if agent_runtime == "codex":
+            plugins = data.setdefault("plugins", {})
+            if isinstance(plugins, dict):
+                allow = plugins.get("allow")
+                if isinstance(allow, list) and "codex" not in allow:
+                    allow.append("codex")
+
+    @staticmethod
+    def _patch_openclaw_model_runtime(model_ref: str, agent_runtime: str) -> None:
+        if _openclaw_legacy_config_enabled():
+            return
+        state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR") or os.path.expanduser("~/.openclaw"))
+        config_path = state_dir / "openclaw.json"
+        if not config_path.exists():
+            return
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        EvalWorker._set_model_agent_runtime_policy(data, model_ref, agent_runtime)
+        tmp_path = config_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp_path.replace(config_path)
+
+    @staticmethod
+    def _strip_agent_runtime_policy(data: dict) -> bool:
+        agents = data.get("agents")
+        if not isinstance(agents, dict):
+            return False
+        defaults = agents.get("defaults")
+        if not isinstance(defaults, dict):
+            return False
+        changed = defaults.pop("agentRuntime", None) is not None
+        models = defaults.get("models")
+        if isinstance(models, dict):
+            for model_cfg in models.values():
+                if isinstance(model_cfg, dict):
+                    changed = model_cfg.pop("agentRuntime", None) is not None or changed
+        return changed
+
+    @staticmethod
+    def _sanitize_non_codex_plugins(data: dict) -> bool:
+        plugins = data.get("plugins")
+        if not isinstance(plugins, dict):
+            return False
+        changed = False
+        allow = plugins.get("allow")
+        if isinstance(allow, list) and "codex" in allow:
+            plugins["allow"] = [item for item in allow if item != "codex"]
+            changed = True
+        entries = plugins.get("entries")
+        if isinstance(entries, dict) and "codex" in entries:
+            entries.pop("codex", None)
+            changed = True
+        return changed
 
     @staticmethod
     def _write_eval_exec_approvals(state_dir: Path) -> None:
@@ -1121,14 +1315,24 @@ class EvalWorker:
         tmp_path.replace(approvals_path)
 
     @staticmethod
-    def _patch_openclaw_config(pairs: list[tuple[str, object]]) -> None:
+    def _patch_openclaw_config(
+        pairs: list[tuple[str, object]],
+        *,
+        strip_agent_runtime: bool = False,
+    ) -> None:
         state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR") or os.path.expanduser("~/.openclaw"))
         config_path = state_dir / "openclaw.json"
         if not config_path.exists():
             logger.warning("openclaw.json not found at %s; skipping direct patch", config_path)
             return
         data = json.loads(config_path.read_text(encoding="utf-8"))
-        changed = False
+        changed = (
+            EvalWorker._strip_agent_runtime_policy(data)
+            if strip_agent_runtime or _openclaw_legacy_config_enabled()
+            else False
+        )
+        if strip_agent_runtime or _openclaw_legacy_config_enabled():
+            changed = EvalWorker._sanitize_non_codex_plugins(data) or changed
         for key, value in pairs:
             parts = key.split(".")
             cursor = data
@@ -1139,11 +1343,108 @@ class EvalWorker:
             if cursor.get(parts[-1]) != value:
                 cursor[parts[-1]] = value
                 changed = True
+        model_ref = ""
+        defaults = data.get("agents", {}).get("defaults", {})
+        if isinstance(defaults, dict):
+            model_cfg = defaults.get("model")
+            if isinstance(model_cfg, dict):
+                model_ref = str(model_cfg.get("primary") or "")
+        changed = EvalWorker._ensure_openrouter_provider_config(data, model_ref) or changed
         if not changed:
             return
         tmp_path = config_path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         tmp_path.replace(config_path)
+
+    @staticmethod
+    def _ensure_openrouter_provider_config(data: dict, model_ref: str) -> bool:
+        if not model_ref.startswith("openrouter/") or len(model_ref.split("/", 1)) != 2:
+            return False
+        model_id = model_ref.split("/", 1)[1]
+        openrouter_timeout_seconds = int(
+            os.environ.get("CLAWBENCH_OPENROUTER_TIMEOUT_SECONDS") or "900"
+        )
+        changed = _set_nested(
+            data,
+            "agents.defaults.thinkingDefault",
+            os.environ.get("CLAWBENCH_OPENROUTER_THINKING_DEFAULT", "low").strip() or "low",
+        )
+        changed = _set_nested(
+            data,
+            "agents.defaults.timeoutSeconds",
+            int(os.environ.get("CLAWBENCH_OPENROUTER_AGENT_TIMEOUT_SECONDS") or "1200"),
+        ) or changed
+        agents_cfg = data.setdefault("agents", {})
+        if isinstance(agents_cfg, dict):
+            defaults_cfg = agents_cfg.setdefault("defaults", {})
+            if isinstance(defaults_cfg, dict):
+                model_defaults = defaults_cfg.setdefault("models", {})
+                if isinstance(model_defaults, dict):
+                    model_cfg = model_defaults.setdefault(model_ref, {})
+                    if not isinstance(model_cfg, dict):
+                        model_cfg = {}
+                        model_defaults[model_ref] = model_cfg
+                        changed = True
+                    params_cfg = model_cfg.setdefault("params", {})
+                    if not isinstance(params_cfg, dict):
+                        params_cfg = {}
+                        model_cfg["params"] = params_cfg
+                        changed = True
+                    extra_body = params_cfg.setdefault("extra_body", {})
+                    if not isinstance(extra_body, dict):
+                        extra_body = {}
+                        params_cfg["extra_body"] = extra_body
+                        changed = True
+                    desired_extra_body = {
+                        "include_reasoning": False,
+                        "reasoning": {"exclude": True},
+                    }
+                    for key, value in desired_extra_body.items():
+                        if extra_body.get(key) != value:
+                            extra_body[key] = value
+                            changed = True
+        models_cfg = data.setdefault("models", {})
+        if not isinstance(models_cfg, dict):
+            return False
+        providers = models_cfg.setdefault("providers", {})
+        if not isinstance(providers, dict):
+            return False
+        provider_cfg = providers.get("openrouter")
+        if not isinstance(provider_cfg, dict):
+            provider_cfg = {}
+            providers["openrouter"] = provider_cfg
+        desired = {
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "api": "openai-completions",
+            "apiKey": "OPENROUTER_API_KEY",
+            "timeoutSeconds": openrouter_timeout_seconds,
+        }
+        for key, value in desired.items():
+            if provider_cfg.get(key) != value:
+                provider_cfg[key] = value
+                changed = True
+        model_entries = provider_cfg.get("models")
+        if not isinstance(model_entries, list):
+            model_entries = []
+            provider_cfg["models"] = model_entries
+            changed = True
+        desired_model = {
+            "id": model_id,
+            "name": model_id,
+            "contextWindow": 131072,
+            "maxTokens": 8192,
+        }
+        for item in model_entries:
+            if isinstance(item, dict) and item.get("id") == model_id:
+                for key, value in desired_model.items():
+                    if item.get(key) != value:
+                        item[key] = value
+                        changed = True
+                break
+        else:
+            model_entries.append(desired_model)
+            changed = True
+        return changed
 
     def _find_gateway_cmd(self) -> list[str] | None:
         import shutil

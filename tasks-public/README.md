@@ -62,6 +62,11 @@ image. Platform upgrades can shift scores, so record the OpenClaw
 version for every published comparison and build both sides of a
 comparison against the same OpenClaw release.
 
+During official harness runs, verifier scripts, expected outputs, and hidden
+answer metadata are staged in a separate evaluator snapshot rather than the
+agent workspace. Public tests may remain visible so agents can self-verify,
+but the harness hashes them and runs the evaluator copy for scoring.
+
 ## How to run Core v1
 
 Using the ClawBench harness:

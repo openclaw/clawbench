@@ -15,6 +15,7 @@ stay where they are and move to `adapters/openclaw.py` in a later step.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -34,6 +35,9 @@ from clawbench.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+EVALUATOR_WORKSPACE_RUNTIME_KEY = "_clawbench_evaluator_workspace"
+PROTECTED_WORKSPACE_HASHES_RUNTIME_KEY = "_clawbench_protected_workspace_hashes"
 
 
 # ---------------------------------------------------------------------------
@@ -95,13 +99,38 @@ async def run_execution_check(
 
     rendered_command = render_template(spec.command, runtime_values)
     rendered_cwd = workspace / render_template(spec.cwd, runtime_values)
+    evaluator_workspace = _evaluator_workspace(runtime_values)
+    evaluator_cwd = (
+        evaluator_workspace / render_template(spec.cwd, runtime_values)
+        if evaluator_workspace is not None
+        else None
+    )
     rendered_env = render_value(spec.env, runtime_values)
+
+    integrity_failure = _protected_workspace_integrity_failure(workspace, runtime_values)
+    if integrity_failure:
+        return ExecutionCheckResult(
+            name=spec.name,
+            command=rendered_command,
+            exit_code=-1,
+            passed=False,
+            reason=integrity_failure,
+        )
+
+    execution_command = _harden_execution_command(
+        rendered_command,
+        evaluator_cwd=evaluator_cwd,
+    )
 
     full_env = {
         **os.environ,
         **{key: str(value) for key, value in rendered_env.items()},
         "PYTHONUNBUFFERED": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "CLAWBENCH_WORKSPACE": str(workspace),
     }
+    if evaluator_workspace is not None:
+        full_env["CLAWBENCH_EVALUATOR_WORKSPACE"] = str(evaluator_workspace)
     python_bin_dir = str(Path(sys.executable).parent)
     full_env["PATH"] = f"{python_bin_dir}:{full_env.get('PATH', '')}"
     python_path_parts = [str(rendered_cwd), str(workspace)]
@@ -113,7 +142,7 @@ async def run_execution_check(
     try:
         if spec.shell:
             process = await asyncio.create_subprocess_shell(
-                rendered_command,
+                execution_command,
                 cwd=str(rendered_cwd),
                 env=full_env,
                 stdout=asyncio.subprocess.PIPE,
@@ -121,7 +150,7 @@ async def run_execution_check(
             )
         else:
             process = await asyncio.create_subprocess_exec(
-                *shlex.split(rendered_command),
+                *shlex.split(execution_command),
                 cwd=str(rendered_cwd),
                 env=full_env,
                 stdout=asyncio.subprocess.PIPE,
@@ -157,7 +186,7 @@ async def run_execution_check(
     )
     return ExecutionCheckResult(
         name=spec.name,
-        command=rendered_command,
+        command=execution_command,
         exit_code=process.returncode,
         stdout=stdout,
         stderr=stderr,
@@ -210,7 +239,11 @@ def evaluate_execution_result(
             return False, "stdout did not match expected text"
 
     if spec.expected_stdout_file:
-        expected_path = workspace / render_template(spec.expected_stdout_file, runtime_values)
+        expected_path = _resolve_expected_file(
+            spec.expected_stdout_file,
+            workspace=workspace,
+            runtime_values=runtime_values,
+        )
         if stdout.strip() != expected_path.read_text(encoding="utf-8").strip():
             return False, f"stdout did not match {spec.expected_stdout_file}"
 
@@ -223,7 +256,11 @@ def evaluate_execution_result(
             return False, "stdout JSON did not match expected JSON"
 
     if spec.expected_json_file:
-        expected_path = workspace / render_template(spec.expected_json_file, runtime_values)
+        expected_path = _resolve_expected_file(
+            spec.expected_json_file,
+            workspace=workspace,
+            runtime_values=runtime_values,
+        )
         try:
             parsed = json.loads(stdout)
         except json.JSONDecodeError as exc:
@@ -233,6 +270,160 @@ def evaluate_execution_result(
             return False, f"stdout JSON did not match {spec.expected_json_file}"
 
     return True, "OK"
+
+
+def _evaluator_workspace(runtime_values: dict[str, Any]) -> Path | None:
+    raw = runtime_values.get(EVALUATOR_WORKSPACE_RUNTIME_KEY)
+    if not raw:
+        return None
+    candidate = Path(str(raw))
+    return candidate if candidate.exists() else None
+
+
+def _protected_workspace_integrity_failure(
+    workspace: Path,
+    runtime_values: dict[str, Any],
+) -> str:
+    protected = runtime_values.get(PROTECTED_WORKSPACE_HASHES_RUNTIME_KEY, {})
+    if not isinstance(protected, dict):
+        return ""
+    for rel_path, expected_hash in sorted(protected.items()):
+        if not isinstance(rel_path, str) or not isinstance(expected_hash, str):
+            continue
+        target = workspace / rel_path
+        if not target.is_file():
+            return f"Protected evaluator asset modified or removed: {rel_path}"
+        if _sha256_file(target) != expected_hash:
+            return f"Protected evaluator asset modified: {rel_path}"
+    return ""
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _harden_execution_command(
+    command: str,
+    *,
+    evaluator_cwd: Path | None,
+) -> str:
+    if evaluator_cwd is None or not evaluator_cwd.exists():
+        return command
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return command
+    if not tokens:
+        return command
+
+    pytest_command = _rewrite_pytest_command(tokens, evaluator_cwd=evaluator_cwd)
+    if pytest_command:
+        return pytest_command
+
+    rewritten = _rewrite_evaluator_script(tokens, evaluator_cwd=evaluator_cwd)
+    if rewritten:
+        return rewritten
+
+    return command
+
+
+def _rewrite_pytest_command(tokens: list[str], *, evaluator_cwd: Path) -> str:
+    if _is_pytest_command(tokens):
+        prefix_len = 1 if Path(tokens[0]).name == "pytest" else 3
+        args = tokens[prefix_len:]
+        option_args: list[str] = []
+        explicit_paths: list[str] = []
+        for arg in args:
+            if arg.startswith("-") and not explicit_paths:
+                option_args.append(arg)
+            elif not explicit_paths and option_args and option_args[-1] in {"-k", "-m"}:
+                option_args.append(arg)
+            else:
+                explicit_paths.append(arg)
+
+        if explicit_paths:
+            test_paths = []
+            for path_arg in explicit_paths:
+                mapped = _map_to_evaluator_path(path_arg, evaluator_cwd)
+                test_paths.append(str(mapped) if mapped is not None else path_arg)
+        else:
+            test_paths = [str(path) for path in _evaluator_test_paths(evaluator_cwd)]
+
+        if test_paths:
+            return shlex.join([sys.executable, "-m", "pytest", *option_args, *test_paths])
+    return ""
+
+
+def _is_pytest_command(tokens: list[str]) -> bool:
+    if Path(tokens[0]).name == "pytest":
+        return True
+    if len(tokens) >= 3 and Path(tokens[0]).name in {
+        "python",
+        "python3",
+        "python3.11",
+        "python3.12",
+    }:
+        return tokens[1:3] == ["-m", "pytest"]
+    return False
+
+
+def _evaluator_test_paths(evaluator_cwd: Path) -> list[Path]:
+    test_files = sorted(
+        path
+        for path in evaluator_cwd.rglob("test_*.py")
+        if path.is_file() and "tests" in path.relative_to(evaluator_cwd).parts
+    )
+    return test_files
+
+
+def _rewrite_evaluator_script(tokens: list[str], *, evaluator_cwd: Path) -> str:
+    if (
+        Path(tokens[0]).name in {"python", "python3", "python3.11", "python3.12", "node"}
+        and len(tokens) >= 2
+    ):
+        script_index = 1
+        candidate = _map_to_evaluator_path(tokens[script_index], evaluator_cwd)
+        if candidate is not None and _is_evaluator_script(candidate):
+            rewritten = [*tokens]
+            rewritten[script_index] = str(candidate)
+            return shlex.join(rewritten)
+    return ""
+
+
+def _map_to_evaluator_path(path_arg: str, evaluator_cwd: Path) -> Path | None:
+    candidate = Path(path_arg)
+    if candidate.is_absolute():
+        return candidate if candidate.exists() else None
+    mapped = evaluator_cwd / candidate
+    return mapped if mapped.exists() else None
+
+
+def _is_evaluator_script(path: Path) -> bool:
+    return path.name.startswith("verify_") and path.suffix.lower() in {
+        ".py",
+        ".js",
+        ".cjs",
+        ".mjs",
+    }
+
+
+def _resolve_expected_file(
+    rel_path: str,
+    *,
+    workspace: Path,
+    runtime_values: dict[str, Any],
+) -> Path:
+    rendered = render_template(rel_path, runtime_values)
+    evaluator_workspace = _evaluator_workspace(runtime_values)
+    if evaluator_workspace is not None:
+        candidate = evaluator_workspace / rendered
+        if candidate.exists():
+            return candidate
+    return workspace / rendered
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +583,9 @@ def resolve_json_path(payload: Any, path: str) -> Any:
 
 
 __all__ = [
+    "EVALUATOR_WORKSPACE_RUNTIME_KEY",
     "MEMORY_FILE_CANDIDATES",
+    "PROTECTED_WORKSPACE_HASHES_RUNTIME_KEY",
     "evaluate_execution_result",
     "memory_visible_in_transcript",
     "read_workspace_memory_text",

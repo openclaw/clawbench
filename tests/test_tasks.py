@@ -72,6 +72,31 @@ def test_workspace_setup_preserves_nested_asset_paths(tmp_path: Path):
     assert (workspace / "tests" / "test_report_client.py").exists()
 
 
+def test_workspace_setup_with_evaluator_hides_grader_only_assets(tmp_path: Path):
+    task = next(
+        task for task in load_all_tasks(tasks_dir=PUBLIC_TASKS_DIR)
+        if task.id == "t3-feature-export"
+    )
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test-model",
+        randomize_order=False,
+        tasks_dir=PUBLIC_TASKS_DIR,
+    )
+    workspace = tmp_path / "workspace"
+    evaluator = tmp_path / "evaluator"
+    workspace.mkdir()
+    evaluator.mkdir()
+
+    protected = harness._setup_workspace(task, workspace, evaluator_workspace=evaluator)
+
+    assert (workspace / "cli.py").exists()
+    assert (workspace / "tests" / "test_export.py").exists()
+    assert not (workspace / "expected" / "issues.csv").exists()
+    assert (evaluator / "expected" / "issues.csv").exists()
+    assert "tests/test_export.py" in protected
+
+
 def test_selected_tasks_include_judge_rubrics():
     # All assertions use task IDs from the Core v1 public set so CI
     # (without the private tasks/) reproduces locally.

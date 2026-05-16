@@ -41,6 +41,20 @@ DONE_PATTERN = re.compile(
     r"\b(done|fixed|completed|finished|all set|tests pass|verified|resolved|ready)\b",
     re.IGNORECASE,
 )
+ABORTED_ONLY_PATTERN = re.compile(r"^\s*this operation was aborted\s*\.?\s*$", re.IGNORECASE)
+NO_AGENT_OUTPUT_PATTERN = re.compile(
+    r"^\s*(?:⚠️\s*)?agent failed before reply:\s*(?:no api key found|auth|authentication|provider)",
+    re.IGNORECASE,
+)
+BROWSER_INFRA_PATTERN = re.compile(
+    r"\b("
+    r"browser tool|browser unavailable|browser.*not available|"
+    r"chromium.*not found|executable.*not found|"
+    r"cdp.*(failed|refused|unavailable|not ready)|"
+    r"connection refused|could not connect|websocket.*failed"
+    r")\b",
+    re.IGNORECASE,
+)
 # Deterministic weights (used when no judge available, or when the task
 # has deterministic execution checks — see combine_run_score).
 RUN_SCORE_WEIGHTS_DETERMINISTIC = {
@@ -80,6 +94,23 @@ RUN_SCORE_WEIGHT_TOTAL = sum(RUN_SCORE_WEIGHTS.values())
 # Legacy alias — a few tests may still reference this name. It is now a
 # synonym for the semantic-only weighting.
 RUN_SCORE_WEIGHTS_WITH_JUDGE = RUN_SCORE_WEIGHTS_SEMANTIC_ONLY
+
+
+def has_agent_output(transcript: Transcript) -> bool:
+    """Return whether the transcript contains substantive agent work."""
+    if transcript.tool_call_sequence:
+        return True
+    assistant_texts = [
+        (message.text or "").strip()
+        for message in transcript.assistant_messages
+        if (message.text or "").strip()
+    ]
+    if not assistant_texts:
+        return False
+    return any(
+        not ABORTED_ONLY_PATTERN.match(text) and not NO_AGENT_OUTPUT_PATTERN.match(text)
+        for text in assistant_texts
+    )
 
 
 async def score_task_run(
@@ -187,6 +218,18 @@ async def score_task_run(
 
 
 DETERMINISTIC_FLOOR = 0.9999
+DETERMINISTIC_FAILURE_BASE_CREDIT = 0.35
+
+
+def _completion_gate(score: float, completion: float, *, has_deterministic_verifier: bool) -> float:
+    """Discount process credit when deterministic completion is incomplete."""
+    if not has_deterministic_verifier or completion >= DETERMINISTIC_FLOOR:
+        return score
+    bounded_completion = max(0.0, min(1.0, completion))
+    multiplier = DETERMINISTIC_FAILURE_BASE_CREDIT + (
+        1.0 - DETERMINISTIC_FAILURE_BASE_CREDIT
+    ) * bounded_completion
+    return score * multiplier
 
 
 def combine_run_score(
@@ -215,6 +258,7 @@ def combine_run_score(
        the judge is the dominant signal (50%) — this is the only regime
        where an LLM judge is allowed to drive the primary score.
     """
+    deterministic_gate = has_deterministic_verifier
     if judge is None:
         weights = RUN_SCORE_WEIGHTS_DETERMINISTIC
         weighted_sum = (
@@ -238,6 +282,7 @@ def combine_run_score(
             )
             total = sum(weights.values())
         else:
+            deterministic_gate = False
             weights = RUN_SCORE_WEIGHTS_WITH_DETERMINISTIC_JUDGE
             weighted_sum = (
                 weights["completion"] * completion
@@ -248,6 +293,7 @@ def combine_run_score(
             total = sum(weights.values())
     else:
         # Semantic-only task: judge is the dominant signal.
+        deterministic_gate = False
         weights = RUN_SCORE_WEIGHTS_SEMANTIC_ONLY
         weighted_sum = (
             weights["completion"] * completion
@@ -257,6 +303,11 @@ def combine_run_score(
         )
         total = sum(weights.values())
     score = weighted_sum / total if total else 0.0
+    score = _completion_gate(
+        score,
+        completion,
+        has_deterministic_verifier=deterministic_gate,
+    )
     return round(min(1.0, max(0.0, score)), 4)
 
 
@@ -308,10 +359,13 @@ def classify_failure_mode(
         if "forbidden shell pattern" in joined or "forbidden tool called" in joined:
             return FailureMode.REWARD_HACK_SUSPECTED
 
+    if not has_agent_output(transcript):
+        return FailureMode.ENVIRONMENT_UNAVAILABLE
+
     failed_text = " ".join(completion_result.failed_assertions).lower()
     if "memory" in failed_text:
         return FailureMode.MEMORY_MISS
-    if task.family.value == "browser":
+    if task.family.value == "browser" and _browser_infra_failure(transcript, failed_text):
         return FailureMode.BROWSER_NAVIGATION_FAILURE
     if "timed out" in failed_text:
         return FailureMode.TIMEOUT
@@ -349,11 +403,27 @@ def classify_error_failure_mode(task: TaskDefinition, error: str | None) -> Fail
     lower_error = error.lower()
     if "timeout" in lower_error or "timed out" in lower_error:
         return FailureMode.TIMEOUT
-    if task.family.value == "browser":
+    if task.family.value == "browser" and BROWSER_INFRA_PATTERN.search(lower_error):
         return FailureMode.BROWSER_NAVIGATION_FAILURE
     if any(token in lower_error for token in ("gateway", "browser tool", "rpc", "connection", "unavailable")):
         return FailureMode.ENVIRONMENT_UNAVAILABLE
     return FailureMode.STATE_REGRESSION
+
+
+def _browser_infra_failure(transcript: Transcript, failed_text: str) -> bool:
+    """Separate browser service failures from ordinary bad browser use."""
+    if BROWSER_INFRA_PATTERN.search(failed_text):
+        return True
+    browser_calls = [
+        call
+        for call in transcript.tool_call_sequence
+        if call.family == "browser" or call.name == "browser"
+    ]
+    for call in browser_calls:
+        haystack = " ".join(str(part) for part in (call.error, call.output, call.input))
+        if BROWSER_INFRA_PATTERN.search(haystack):
+            return True
+    return False
 
 
 def evaluate_behavior(expectations: BehaviorExpectations, transcript: Transcript) -> BehaviorResult:

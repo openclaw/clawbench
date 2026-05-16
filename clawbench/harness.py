@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -27,7 +28,12 @@ from clawbench.adapters.hermes import HermesAdapterConfig
 from clawbench.adapters.openclaw import OpenClawAdapterConfig
 from clawbench.canonical.convert import from_task_definition
 from clawbench.client import GatewayClient, GatewayConfig
-from clawbench.environment_files import run_execution_check, verify_file_state
+from clawbench.environment_files import (
+    EVALUATOR_WORKSPACE_RUNTIME_KEY,
+    PROTECTED_WORKSPACE_HASHES_RUNTIME_KEY,
+    run_execution_check,
+    verify_file_state,
+)
 from clawbench.judge import judge_task_run
 from clawbench.releases import compute_task_snapshot_fingerprint, load_active_release
 from clawbench.schemas import (
@@ -50,6 +56,7 @@ from clawbench.scorer import (
     classify_failure_mode,
     combine_run_score,
     evaluate_behavior,
+    has_agent_output,
 )
 from clawbench.services import build_runtime_values, start_background_services, stop_background_services
 from clawbench.stats import bootstrap_ci, summarize_task_runs
@@ -118,6 +125,7 @@ class BenchmarkHarness:
         browser_concurrency: int = 1,
         adapter: str = "openclaw",
         tool_profile_name: str | None = None,
+        trace_dir: Path | None = None,
     ) -> None:
         self.gateway_config = gateway_config
         self.model = model
@@ -143,6 +151,8 @@ class BenchmarkHarness:
         self.browser_concurrency = max(1, int(browser_concurrency))
         self.adapter = adapter
         self.tool_profile_name = tool_profile_name
+        trace_dir_env = os.environ.get("CLAWBENCH_TRACE_DIR", "").strip()
+        self.trace_dir = trace_dir if trace_dir is not None else (Path(trace_dir_env) if trace_dir_env else None)
         self.repo_root = Path(__file__).parent.parent
         self.last_task_runs: dict[str, list[TaskRunResult]] = {}
 
@@ -255,6 +265,7 @@ class BenchmarkHarness:
                     if self.progress_callback is not None:
                         await self.progress_callback(task, run_index)
                     result = await self._run_single(task, run_index)
+                    self._archive_run_trace(result)
                     results_by_task[task.id][run_index] = result
 
                     completed += 1
@@ -297,6 +308,22 @@ class BenchmarkHarness:
             console.print(f"    [red]! {failure}[/]")
         for failure in result.trajectory_result.forbidden_violations[:2]:
             console.print(f"    [red]! {failure}[/]")
+
+    def _archive_run_trace(self, result: TaskRunResult) -> None:
+        if self.trace_dir is None:
+            return
+        try:
+            task_dir = self.trace_dir / result.task_id
+            task_dir.mkdir(parents=True, exist_ok=True)
+            path = task_dir / f"run{result.run_index}.json"
+            path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning(
+                "Failed to archive run trace for %s/run%s: %s",
+                result.task_id,
+                result.run_index,
+                exc,
+            )
 
     async def _run_single(self, task: TaskDefinition, run_index: int) -> TaskRunResult:
         return await self._run_single_with_agent_adapter(task, run_index)
@@ -438,6 +465,7 @@ class BenchmarkHarness:
                     )
 
         workspace = self._create_run_workspace(task, run_index)
+        evaluator_workspace = self._create_evaluator_workspace(task, run_index)
         services = []
         t_run_start = time.monotonic()
         transcript = Transcript()
@@ -452,7 +480,11 @@ class BenchmarkHarness:
         )
 
         try:
-            self._setup_workspace(task, workspace)
+            protected_workspace_hashes = self._setup_workspace(
+                task,
+                workspace,
+                evaluator_workspace=evaluator_workspace,
+            )
             runtime_values = build_runtime_values(
                 workspace=workspace,
                 repo_root=self.repo_root,
@@ -460,6 +492,8 @@ class BenchmarkHarness:
                     "task_id": task.id,
                     "model": self.model,
                     "prompt_variant": self.prompt_variant,
+                    EVALUATOR_WORKSPACE_RUNTIME_KEY: str(evaluator_workspace),
+                    PROTECTED_WORKSPACE_HASHES_RUNTIME_KEY: protected_workspace_hashes,
                 },
             )
             services, runtime_values = await start_background_services(
@@ -554,6 +588,11 @@ class BenchmarkHarness:
                 trace_distribution=list(task.trace_distribution),
                 tool_surface=list(task.tool_surface),
                 risk_tags=list(task.risk_tags),
+                surfaces=list(task.surfaces),
+                turn_count=task.turn_count,
+                artifact_count=task.artifact_count,
+                statefulness=task.statefulness,
+                evidence_risk=task.evidence_risk,
                 similarity_hash=task.similarity_hash,
                 official=task.official,
                 run_index=run_index,
@@ -568,6 +607,7 @@ class BenchmarkHarness:
             await stop_background_services(services)
             if os.environ.get("CLAWBENCH_KEEP_WORKSPACES") != "1":
                 shutil.rmtree(workspace, ignore_errors=True)
+                self._remove_tree(evaluator_workspace)
 
     async def _score_adapter_task_run(
         self,
@@ -644,6 +684,17 @@ class BenchmarkHarness:
             duration_ms=duration_ms,
             usage=token_usage,
         )
+        if (
+            error is None
+            and not has_agent_output(ctx.transcript)
+            and token_usage.total_tokens == 0
+        ):
+            error = "agent runtime unavailable: no assistant output"
+            completion_result = completion_result.model_copy(
+                update={"passed_assertions": 0, "score": 0.0}
+            )
+            trajectory_result = trajectory_result.model_copy(update={"score": 0.0})
+            behavior_result = behavior_result.model_copy(update={"score": 0.0})
         run_score = combine_run_score(
             completion=completion_result.score,
             trajectory=trajectory_result.score,
@@ -696,6 +747,11 @@ class BenchmarkHarness:
             trace_distribution=list(task.trace_distribution),
             tool_surface=list(task.tool_surface),
             risk_tags=list(task.risk_tags),
+            surfaces=list(task.surfaces),
+            turn_count=task.turn_count,
+            artifact_count=task.artifact_count,
+            statefulness=task.statefulness,
+            evidence_risk=task.evidence_risk,
             similarity_hash=task.similarity_hash,
             official=task.official,
             run_index=0,
@@ -732,22 +788,52 @@ class BenchmarkHarness:
         workspace.mkdir(parents=True, exist_ok=True)
         return workspace
 
-    def _setup_workspace(self, task: TaskDefinition, workspace: Path) -> None:
+    def _create_evaluator_workspace(self, task: TaskDefinition, run_index: int) -> Path:
+        return Path(
+            tempfile.mkdtemp(
+                prefix=f"clawbench-eval-{task.id}-run-{run_index}-"
+            )
+        )
+
+    def _setup_workspace(
+        self,
+        task: TaskDefinition,
+        workspace: Path,
+        *,
+        evaluator_workspace: Path | None = None,
+    ) -> dict[str, str]:
         assets_dir = get_assets_dir()
+        protected_hashes: dict[str, str] = {}
 
         for pack in task.setup.asset_packs:
             source = assets_dir / pack
             if not source.exists():
                 raise FileNotFoundError(f"Missing asset pack {pack}")
-            self._copy_into_workspace(source, workspace)
+            if evaluator_workspace is not None:
+                self._copy_into_workspace(source, evaluator_workspace)
+            self._copy_asset_pack_to_agent_workspace(
+                task,
+                source,
+                workspace,
+                protected_hashes=protected_hashes,
+                hide_evaluator_only=evaluator_workspace is not None,
+            )
 
         for rel_path in task.setup.workspace_files:
             source = assets_dir / rel_path
             if not source.exists():
                 raise FileNotFoundError(f"Missing workspace asset {rel_path}")
+            if evaluator_workspace is not None:
+                target = evaluator_workspace / rel_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
             target = workspace / rel_path
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+
+        if evaluator_workspace is not None:
+            self._make_tree_readonly(evaluator_workspace)
+        return protected_hashes
 
     def _copy_into_workspace(self, source: Path, workspace: Path) -> None:
         if source.is_file():
@@ -763,6 +849,99 @@ class BenchmarkHarness:
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(item, target)
+
+    def _copy_asset_pack_to_agent_workspace(
+        self,
+        task: TaskDefinition,
+        source: Path,
+        workspace: Path,
+        *,
+        protected_hashes: dict[str, str],
+        hide_evaluator_only: bool,
+    ) -> None:
+        if source.is_file():
+            rel_path = Path(source.name)
+            if self._copy_asset_to_agent_workspace(
+                task,
+                rel_path,
+                hide_evaluator_only=hide_evaluator_only,
+            ):
+                target = workspace / rel_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                if self._protect_workspace_asset(task, rel_path):
+                    protected_hashes[str(rel_path)] = self._sha256_file(source)
+            return
+
+        for item in source.rglob("*"):
+            if item.is_dir():
+                continue
+            rel_path = item.relative_to(source)
+            if not self._copy_asset_to_agent_workspace(
+                task,
+                rel_path,
+                hide_evaluator_only=hide_evaluator_only,
+            ):
+                continue
+            target = workspace / rel_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, target)
+            if self._protect_workspace_asset(task, rel_path):
+                protected_hashes[str(rel_path)] = self._sha256_file(item)
+
+    def _copy_asset_to_agent_workspace(
+        self,
+        task: TaskDefinition,
+        rel_path: Path,
+        *,
+        hide_evaluator_only: bool,
+    ) -> bool:
+        if not hide_evaluator_only:
+            return True
+        parts = rel_path.parts
+        name = rel_path.name
+        if name.startswith("verify_"):
+            return False
+        if any(part == "expected" for part in parts):
+            return False
+        if name.startswith(".correct_"):
+            return False
+        if task.pool.value == "official_hidden" and "tests" in parts:
+            return False
+        return True
+
+    def _protect_workspace_asset(self, task: TaskDefinition, rel_path: Path) -> bool:
+        parts = rel_path.parts
+        return "tests" in parts and task.pool.value != "official_hidden"
+
+    def _make_tree_readonly(self, root: Path) -> None:
+        for path in sorted(root.rglob("*"), reverse=True):
+            try:
+                if path.is_file():
+                    path.chmod(0o444)
+            except OSError:
+                continue
+
+    def _sha256_file(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _remove_tree(self, root: Path) -> None:
+        if not root.exists():
+            return
+        for path in sorted(root.rglob("*"), reverse=True):
+            try:
+                path.chmod(0o700 if path.is_dir() else 0o600)
+            except OSError:
+                continue
+        try:
+            root.chmod(0o700)
+        except OSError:
+            pass
+        shutil.rmtree(root, ignore_errors=True)
 
     async def _assert_browser_support(self, client: GatewayClient, session_key: str) -> None:
         inventory = await client.get_effective_tools(session_key)
@@ -797,6 +976,7 @@ class BenchmarkHarness:
             input_tokens = [result.efficiency_result.input_tokens for result in runs]
             output_tokens = [result.efficiency_result.output_tokens for result in runs]
             reasoning_tokens = [result.efficiency_result.reasoning_tokens for result in runs]
+            component_tokens = [result.efficiency_result.component_tokens for result in runs]
             total_tokens = [result.efficiency_result.total_tokens for result in runs]
             cost_values = [result.efficiency_result.estimated_cost_usd for result in runs]
             pass_flags = [self._is_passing_run(task, result) for result in runs]
@@ -840,6 +1020,11 @@ class BenchmarkHarness:
                     trace_distribution=list(task.trace_distribution),
                     tool_surface=list(task.tool_surface),
                     risk_tags=list(task.risk_tags),
+                    surfaces=list(task.surfaces),
+                    turn_count=task.turn_count,
+                    artifact_count=task.artifact_count,
+                    statefulness=task.statefulness,
+                    evidence_risk=task.evidence_risk,
                     similarity_hash=task.similarity_hash,
                     official=task.official,
                     runs=len(runs),
@@ -872,8 +1057,14 @@ class BenchmarkHarness:
                     mean_input_tokens=_mean(input_tokens),
                     mean_output_tokens=_mean(output_tokens),
                     mean_reasoning_tokens=_mean(reasoning_tokens),
+                    mean_component_tokens=_mean(component_tokens),
                     mean_total_tokens=_mean(total_tokens),
                     mean_cost_usd=_mean(cost_values),
+                    component_tokens_per_pass=(
+                        sum(run.efficiency_result.component_tokens for run in passing_runs) / len(passing_runs)
+                        if passing_runs
+                        else 0.0
+                    ),
                     tokens_per_pass=(
                         sum(run.efficiency_result.total_tokens for run in passing_runs) / len(passing_runs)
                         if passing_runs
@@ -976,6 +1167,21 @@ class BenchmarkHarness:
             dimension="risk_tag",
             values_for=lambda stat: stat.risk_tags,
         )
+        surface_results = _dimension_results(
+            task_stats,
+            dimension="surfaces",
+            values_for=lambda stat: stat.surfaces,
+        )
+        statefulness_results = _dimension_results(
+            task_stats,
+            dimension="statefulness",
+            values_for=lambda stat: [stat.statefulness] if stat.statefulness else [],
+        )
+        evidence_risk_results = _dimension_results(
+            task_stats,
+            dimension="evidence_risk",
+            values_for=lambda stat: [stat.evidence_risk] if stat.evidence_risk else [],
+        )
         dimension_results = {
             "category": category_results,
             "domain": domain_results,
@@ -983,6 +1189,9 @@ class BenchmarkHarness:
             "trace_distribution": trace_distribution_results,
             "tool_surface": tool_surface_results,
             "risk_tag": risk_tag_results,
+            "surfaces": surface_results,
+            "statefulness": statefulness_results,
+            "evidence_risk": evidence_risk_results,
         }
 
         overall_ci = bootstrap_ci([stat.mean_task_score for stat in task_stats])
@@ -1020,6 +1229,12 @@ class BenchmarkHarness:
                 "ablation_profile": ablation_profile.model_dump(),
                 "tool_profile": ablation_profile.tool_profile.model_dump(),
                 "harness": ablation_profile.harness.model_dump(),
+                **({"trace_dir": str(self.trace_dir)} if self.trace_dir is not None else {}),
+                **(
+                    {"openclaw_tool_search": os.environ["CLAWBENCH_OPENCLAW_TOOL_SEARCH"].strip()}
+                    if os.environ.get("CLAWBENCH_OPENCLAW_TOOL_SEARCH", "").strip()
+                    else {}
+                ),
                 "known_adapters": list(KNOWN_ADAPTERS),
                 "executable_adapters": sorted(EXECUTABLE_ADAPTERS),
                 "subsets": self.subsets,
@@ -1027,6 +1242,14 @@ class BenchmarkHarness:
                 "dimension_coverage": {
                     key: len(value)
                     for key, value in dimension_results.items()
+                },
+                "turn_count_range": {
+                    "min": min((stat.turn_count for stat in task_stats if stat.turn_count), default=0),
+                    "max": max((stat.turn_count for stat in task_stats), default=0),
+                },
+                "artifact_count_range": {
+                    "min": min((stat.artifact_count for stat in task_stats if stat.artifact_count), default=0),
+                    "max": max((stat.artifact_count for stat in task_stats), default=0),
                 },
                 "official_only": self.official_only,
                 **(environment_extra or {}),
@@ -1058,8 +1281,10 @@ class BenchmarkHarness:
             overall_input_tokens=_mean([stat.mean_input_tokens for stat in task_stats]),
             overall_output_tokens=_mean([stat.mean_output_tokens for stat in task_stats]),
             overall_reasoning_tokens=_mean([stat.mean_reasoning_tokens for stat in task_stats]),
+            overall_component_tokens=_mean([stat.mean_component_tokens for stat in task_stats]),
             overall_total_tokens=_mean([stat.mean_total_tokens for stat in task_stats]),
             overall_cost_usd=_mean([stat.mean_cost_usd for stat in task_stats]),
+            overall_component_tokens_per_pass=_mean([stat.component_tokens_per_pass for stat in task_stats]),
             overall_tokens_per_pass=_mean([stat.tokens_per_pass for stat in task_stats]),
             overall_cost_per_pass=_mean([stat.cost_per_pass for stat in task_stats]),
             overall_worst_of_n=_mean([stat.worst_of_n for stat in task_stats]),
@@ -1181,7 +1406,8 @@ class BenchmarkHarness:
         console.print(
             f"  Latency p50={result.overall_median_latency_ms:.0f}ms "
             f"p95={result.overall_p95_latency_ms:.0f}ms  "
-            f"Tokens/pass={result.overall_tokens_per_pass:.0f}  "
+            f"Component tokens/pass={result.overall_component_tokens_per_pass:.0f}  "
+            f"TotalTokens/pass={result.overall_tokens_per_pass:.0f}  "
             f"Cost/pass=${result.overall_cost_per_pass:.4f}"
         )
         console.print(
@@ -1203,7 +1429,8 @@ class BenchmarkHarness:
         table.add_column("Judge", justify="right")
         table.add_column("Reliab", justify="right")
         table.add_column("p50 ms", justify="right")
-        table.add_column("Tok/pass", justify="right")
+        table.add_column("CompTok/pass", justify="right")
+        table.add_column("TotalTok/pass", justify="right")
         table.add_column("Failure", justify="left")
 
         for stat in result.task_results:
@@ -1222,6 +1449,7 @@ class BenchmarkHarness:
                 f"{stat.mean_judge_score:.2f}" if stat.judged_runs > 0 else "-",
                 f"{stat.reliability_score:.2f}",
                 f"{stat.median_duration_ms:.0f}",
+                f"{stat.component_tokens_per_pass:.0f}",
                 f"{stat.tokens_per_pass:.0f}",
                 top_failure,
             )

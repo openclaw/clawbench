@@ -91,6 +91,13 @@ Reliability is first-class. Official comparisons run each task three times and
 report per-task variance, pass rate, pass^k, confidence intervals, and
 worst-of-n style robustness signals.
 
+Completion verifiers run from a separate evaluator-owned snapshot of each
+task asset pack. Agent workspaces do not receive verifier scripts,
+expected-output files, or hidden answer metadata when an evaluator snapshot is
+available, and public test files that remain visible for self-verification are
+hash-checked before scoring. This prevents a run from passing by editing the
+grader instead of completing the task.
+
 ## Quick Start
 
 Install locally:

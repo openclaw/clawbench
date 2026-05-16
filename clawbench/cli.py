@@ -140,6 +140,12 @@ def cli(verbose: bool) -> None:
     is_flag=True,
     help="Run quick post-benchmark dynamics analysis. Prefer dynamics-report for offline cache/archive analysis.",
 )
+@click.option(
+    "--trace-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Optional directory for per-run TaskRunResult JSON traces, including transcripts.",
+)
 def run(
     model: str,
     adapter: str,
@@ -165,6 +171,7 @@ def run(
     tool_profile: str | None,
     insights_dir: Path,
     dynamics: bool,
+    trace_dir: Path | None,
 ) -> None:
     gateway_config = GatewayConfig(url=gateway_url, token=gateway_token)
     harness = BenchmarkHarness(
@@ -186,6 +193,7 @@ def run(
         concurrency=concurrency,
         browser_concurrency=browser_concurrency,
         tool_profile_name=tool_profile,
+        trace_dir=trace_dir,
     )
 
     result = asyncio.run(harness.run())
@@ -837,7 +845,8 @@ def show(result_file: str) -> None:
     console.print(
         f"  Latency p50={result.overall_median_latency_ms:.0f}ms "
         f"p95={result.overall_p95_latency_ms:.0f}ms  "
-        f"Tokens/pass={result.overall_tokens_per_pass:.0f}  "
+        f"Component tokens/pass={result.overall_component_tokens_per_pass:.0f}  "
+        f"TotalTokens/pass={result.overall_tokens_per_pass:.0f}  "
         f"Cost/pass=${result.overall_cost_per_pass:.4f}"
     )
     console.print(
@@ -871,7 +880,9 @@ def show(result_file: str) -> None:
             f"traj={task.mean_trajectory_score:.2f} beh={task.mean_behavior_score:.2f} "
             f"judge={judge_value} "
             f"rel={task.reliability_score:.2f} delivery={task.delivery_outcome_counts} "
-            f"tok/pass={task.tokens_per_pass:.0f} p50={task.median_duration_ms:.0f}ms fail={top_failure}"
+            f"component_tok/pass={task.component_tokens_per_pass:.0f} "
+            f"total_tok/pass={task.tokens_per_pass:.0f} "
+            f"p50={task.median_duration_ms:.0f}ms fail={top_failure}"
         )
 
 

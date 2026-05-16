@@ -8,7 +8,7 @@ from websockets.exceptions import InvalidMessage, InvalidStatus
 from websockets.http11 import Response
 
 from clawbench.client import GatewayClient, GatewayConfig, _correlate_transcript, _parse_single_message
-from clawbench.schemas import Transcript
+from clawbench.schemas import EfficiencyResult, TokenUsage, Transcript
 
 
 def test_gateway_config_defaults():
@@ -42,6 +42,7 @@ async def test_gateway_client_disables_websocket_keepalive_for_long_rpc(
     monkeypatch: pytest.MonkeyPatch,
 ):
     connect_kwargs: dict[str, object] = {}
+    connect_params: dict[str, object] = {}
 
     class FakeWebSocket:
         async def close(self) -> None:
@@ -55,6 +56,7 @@ async def test_gateway_client_disables_websocket_keepalive_for_long_rpc(
         return {"payload": {"nonce": ""}}
 
     async def fake_rpc(self, method: str, params=None, **kwargs):
+        connect_params.update(params or {})
         return {"payload": {"type": "hello-ok", "protocol": 3}}
 
     async def fake_listener(self):
@@ -71,6 +73,8 @@ async def test_gateway_client_disables_websocket_keepalive_for_long_rpc(
 
     assert connect_kwargs["ping_interval"] is None
     assert connect_kwargs["ping_timeout"] is None
+    assert connect_params["minProtocol"] == 3
+    assert connect_params["maxProtocol"] == 4
 
 
 def test_tool_results_are_correlated_back_to_tool_calls():
@@ -99,6 +103,74 @@ def test_tool_results_are_correlated_back_to_tool_calls():
     assert call.error == "ERROR failed test"
 
 
+def test_parser_accepts_codex_tool_search_output_shape():
+    tool_message = _parse_single_message(
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_search_call",
+                    "call_id": "search-1",
+                    "name": "tool_search",
+                    "arguments": {"query": "message"},
+                },
+                {
+                    "type": "functionCall",
+                    "callId": "call-1",
+                    "name": "message",
+                    "arguments": '{"text":"hello"}',
+                },
+            ],
+        }
+    )
+    result_message = _parse_single_message(
+        {
+            "role": "toolResult",
+            "toolCallId": "call-1",
+            "content": [
+                {
+                    "type": "toolSearchOutput",
+                    "callId": "search-1",
+                    "output": [{"text": "message: send a message"}],
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-1",
+                    "output": "sent",
+                },
+            ],
+        }
+    )
+
+    transcript = _correlate_transcript(Transcript(messages=[tool_message, result_message]))  # type: ignore[arg-type]
+
+    assert [call.name for call in transcript.tool_call_sequence] == ["tool_search", "message"]
+    assert transcript.tool_call_sequence[0].output == "message: send a message"
+    assert transcript.tool_call_sequence[1].output == "sent"
+    assert transcript.tool_call_sequence[1].success is True
+
+
+def test_parser_correlates_plain_top_level_tool_result_message():
+    tool_message = _parse_single_message(
+        {
+            "role": "assistant",
+            "content": [{"type": "toolUse", "id": "call-1", "name": "read", "input": {}}],
+        }
+    )
+    result_message = _parse_single_message(
+        {
+            "role": "toolResult",
+            "toolUseId": "call-1",
+            "content": "file contents",
+        }
+    )
+
+    transcript = _correlate_transcript(Transcript(messages=[tool_message, result_message]))  # type: ignore[arg-type]
+
+    assert transcript.tool_call_sequence[0].output == "file contents"
+    assert transcript.tool_call_sequence[0].success is True
+
+
 def test_message_usage_is_parsed_into_transcript_usage():
     message = _parse_single_message(
         {
@@ -122,6 +194,15 @@ def test_message_usage_is_parsed_into_transcript_usage():
     assert message.usage.reasoning_tokens == 5
     assert message.usage.total_tokens == 40
     assert message.usage.total_cost_usd == 0.0125
+
+
+def test_efficiency_component_tokens_stay_separate_from_total_snapshot():
+    usage = TokenUsage(input_tokens=10, output_tokens=5, cache_read_tokens=3, total_tokens=10_000)
+
+    result = EfficiencyResult.from_usage(duration_ms=123, usage=usage)
+
+    assert result.component_tokens == 18
+    assert result.total_tokens == 10_000
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,14 @@ FROM ghcr.io/openclaw/openclaw:2026.4.26
 
 USER root
 COPY patches/patch_openclaw_426_agent_create_queue.mjs /tmp/patch_openclaw_426_agent_create_queue.mjs
+COPY patches/patch_openclaw_426_skip_eval_health_probes.mjs /tmp/patch_openclaw_426_skip_eval_health_probes.mjs
+COPY patches/prestage_openclaw_426_eval_plugin_runtime_deps.mjs /tmp/prestage_openclaw_426_eval_plugin_runtime_deps.mjs
 RUN node /tmp/patch_openclaw_426_agent_create_queue.mjs && \
-    rm /tmp/patch_openclaw_426_agent_create_queue.mjs
+    node /tmp/patch_openclaw_426_skip_eval_health_probes.mjs && \
+    OPENCLAW_PLUGIN_STAGE_DIR=/home/node/.openclaw/plugin-runtime-deps node /tmp/prestage_openclaw_426_eval_plugin_runtime_deps.mjs && \
+    chown -R node:node /home/node/.openclaw/plugin-runtime-deps && \
+    rm /tmp/patch_openclaw_426_agent_create_queue.mjs \
+       /tmp/patch_openclaw_426_skip_eval_health_probes.mjs \
+       /tmp/prestage_openclaw_426_eval_plugin_runtime_deps.mjs
 
 USER node

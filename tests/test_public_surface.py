@@ -1,4 +1,5 @@
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -15,6 +16,27 @@ def _public_task_ids() -> set[str]:
 
 def _mentioned_task_ids(path: Path) -> set[str]:
     return set(TASK_ID_RE.findall(path.read_text(encoding="utf-8", errors="ignore")))
+
+
+def _tracked_script_files() -> list[Path]:
+    try:
+        output = subprocess.check_output(
+            ["git", "ls-files", "scripts"],
+            cwd=REPO_ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return [
+            path
+            for path in sorted((REPO_ROOT / "scripts").glob("*"))
+            if path.is_file() and path.suffix in {".py", ".sh"}
+        ]
+    return [
+        REPO_ROOT / line
+        for line in output.splitlines()
+        if Path(line).suffix in {".py", ".sh"}
+    ]
 
 
 def test_public_docs_only_reference_public_task_ids():
@@ -39,9 +61,7 @@ def test_reusable_scripts_do_not_embed_private_task_ids():
     public_ids = _public_task_ids()
     leaked: dict[str, list[str]] = {}
 
-    for path in sorted((REPO_ROOT / "scripts").glob("*")):
-        if not path.is_file() or path.suffix not in {".py", ".sh"}:
-            continue
+    for path in _tracked_script_files():
         private_mentions = sorted(_mentioned_task_ids(path) - public_ids)
         if private_mentions:
             leaked[str(path.relative_to(REPO_ROOT))] = private_mentions

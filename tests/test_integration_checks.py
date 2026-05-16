@@ -6,6 +6,10 @@ import pytest
 
 import clawbench.tasks as tasks_module
 from clawbench.client import GatewayConfig
+from clawbench.environment_files import (
+    EVALUATOR_WORKSPACE_RUNTIME_KEY,
+    PROTECTED_WORKSPACE_HASHES_RUNTIME_KEY,
+)
 from clawbench.environment import verify_completion
 from clawbench.harness import BenchmarkHarness
 from clawbench.schemas import ToolCall, Transcript, TranscriptMessage
@@ -34,6 +38,37 @@ def _prepare_workspace(task_id: str, tmp_path: Path) -> tuple[Path, object]:
     workspace.mkdir(parents=True, exist_ok=True)
     harness._setup_workspace(task, workspace)
     return workspace, task
+
+
+def _prepare_isolated_workspace(
+    task_id: str,
+    tmp_path: Path,
+) -> tuple[Path, Path, object, dict[str, str]]:
+    task = next(task for task in load_all_tasks(tasks_dir=PUBLIC_TASKS_DIR) if task.id == task_id)
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test-model",
+        randomize_order=False,
+        tasks_dir=PUBLIC_TASKS_DIR,
+    )
+    workspace = tmp_path / f"{task_id}-workspace"
+    evaluator = tmp_path / f"{task_id}-evaluator"
+    workspace.mkdir(parents=True, exist_ok=True)
+    evaluator.mkdir(parents=True, exist_ok=True)
+    protected_hashes = harness._setup_workspace(task, workspace, evaluator_workspace=evaluator)
+    return workspace, evaluator, task, protected_hashes
+
+
+def _isolated_runtime_values(
+    workspace: Path,
+    evaluator: Path,
+    protected_hashes: dict[str, str],
+):
+    return {
+        **build_runtime_values(workspace=workspace, repo_root=Path.cwd()),
+        EVALUATOR_WORKSPACE_RUNTIME_KEY: str(evaluator),
+        PROTECTED_WORKSPACE_HASHES_RUNTIME_KEY: protected_hashes,
+    }
 
 
 @pytest.mark.asyncio
@@ -109,6 +144,75 @@ async def test_browser_completion_check_passes_after_fix(tmp_path: Path):
         assert result.score == 1.0
     finally:
         await stop_background_services(services)
+
+
+@pytest.mark.asyncio
+async def test_workspace_verifier_overwrite_does_not_pass(tmp_path: Path):
+    workspace, evaluator, task, protected_hashes = _prepare_isolated_workspace(
+        "t3-data-sql-query",
+        tmp_path,
+    )
+    (workspace / "verify_results.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+    runtime_values = _isolated_runtime_values(workspace, evaluator, protected_hashes)
+
+    result = await verify_completion(
+        task.completion,
+        workspace=workspace,
+        client=DummyClient(),  # type: ignore[arg-type]
+        session_key="",
+        runtime_values=runtime_values,
+    )
+
+    assert result.score == 0.0
+    assert result.execution_results[0].command.startswith("python3 ")
+    assert str(evaluator / "verify_results.py") in result.execution_results[0].command
+
+
+@pytest.mark.asyncio
+async def test_workspace_expected_output_overwrite_does_not_pass(tmp_path: Path):
+    workspace, evaluator, task, protected_hashes = _prepare_isolated_workspace(
+        "t3-data-pipeline-report",
+        tmp_path,
+    )
+    (workspace / "expected").mkdir(exist_ok=True)
+    (workspace / "expected" / "report.txt").write_text("", encoding="utf-8")
+    (workspace / "pipeline.py").write_text("print('')\n", encoding="utf-8")
+    runtime_values = _isolated_runtime_values(workspace, evaluator, protected_hashes)
+
+    result = await verify_completion(
+        task.completion,
+        workspace=workspace,
+        client=DummyClient(),  # type: ignore[arg-type]
+        session_key="",
+        runtime_values=runtime_values,
+    )
+
+    assert result.score == 0.0
+    assert result.failed_assertions
+
+
+@pytest.mark.asyncio
+async def test_workspace_test_mutation_is_detected(tmp_path: Path):
+    workspace, evaluator, task, protected_hashes = _prepare_isolated_workspace(
+        "t1-bugfix-discount",
+        tmp_path,
+    )
+    (workspace / "tests" / "test_pricing.py").write_text(
+        "def test_green(): assert True\n",
+        encoding="utf-8",
+    )
+    runtime_values = _isolated_runtime_values(workspace, evaluator, protected_hashes)
+
+    result = await verify_completion(
+        task.completion,
+        workspace=workspace,
+        client=DummyClient(),  # type: ignore[arg-type]
+        session_key="",
+        runtime_values=runtime_values,
+    )
+
+    assert result.score == 0.0
+    assert "Protected evaluator asset modified" in result.failed_assertions[0]
 
 
 def test_memory_task_trajectory_requires_memory_tool():

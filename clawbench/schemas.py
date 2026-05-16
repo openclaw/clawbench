@@ -135,6 +135,13 @@ class ToolCall(BaseModel):
     error: str = ""
 
 
+class ToolResult(BaseModel):
+    """A single tool result extracted from the transcript."""
+
+    id: str
+    content: str = ""
+
+
 class TokenUsage(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
@@ -155,6 +162,16 @@ class TokenUsage(BaseModel):
             total_cost_usd=self.total_cost_usd + other.total_cost_usd,
         )
 
+    @property
+    def component_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.reasoning_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+        )
+
 
 class EfficiencyResult(BaseModel):
     duration_ms: int = 0
@@ -163,6 +180,7 @@ class EfficiencyResult(BaseModel):
     reasoning_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    component_tokens: int = 0
     total_tokens: int = 0
     estimated_cost_usd: float = 0.0
 
@@ -175,15 +193,29 @@ class EfficiencyResult(BaseModel):
             reasoning_tokens=usage.reasoning_tokens,
             cache_read_tokens=usage.cache_read_tokens,
             cache_write_tokens=usage.cache_write_tokens,
+            component_tokens=usage.component_tokens,
             total_tokens=usage.total_tokens,
             estimated_cost_usd=usage.total_cost_usd,
         )
+
+    @model_validator(mode="after")
+    def _populate_component_tokens(self) -> EfficiencyResult:
+        if self.component_tokens == 0:
+            self.component_tokens = (
+                self.input_tokens
+                + self.output_tokens
+                + self.reasoning_tokens
+                + self.cache_read_tokens
+                + self.cache_write_tokens
+            )
+        return self
 
 
 class TranscriptMessage(BaseModel):
     role: str
     text: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
+    tool_results: list[ToolResult] = Field(default_factory=list)
     tool_result_for: str | None = None
     tool_result_content: str = ""
     timestamp_ms: int = 0
@@ -396,6 +428,11 @@ class TaskDefinition(BaseModel):
     trace_distribution: list[str] = Field(default_factory=list)
     tool_surface: list[str] = Field(default_factory=list)
     risk_tags: list[str] = Field(default_factory=list)
+    surfaces: list[str] = Field(default_factory=list)
+    turn_count: int = 0
+    artifact_count: int = 0
+    statefulness: str = ""
+    evidence_risk: str = ""
     first_used_at: str = ""
     retire_after_runs: int = 0
     similarity_hash: str = ""
@@ -418,6 +455,35 @@ class TaskDefinition(BaseModel):
             raise ValueError("TaskDefinition requires either `user` or `phases`.")
         if not self.variant_group:
             self.variant_group = self.id
+        if not self.surfaces:
+            self.surfaces = list(self.tool_surface) or ([self.surface] if self.surface else [])
+        if self.turn_count <= 0:
+            self.turn_count = sum(len(phase.user.turns) for phase in self.normalized_phases())
+        if self.artifact_count <= 0:
+            file_count = len(self.completion.files)
+            state_count = (
+                len(self.completion.memory)
+                + len(self.completion.cron)
+                + len(self.completion.gateway_assertions)
+                + (1 if self.completion.session is not None else 0)
+            )
+            self.artifact_count = file_count + state_count + len(self.completion.execution_checks)
+        if not self.statefulness:
+            if self.completion.memory or self.setup.memory_seed:
+                self.statefulness = "durable_memory"
+            elif self.phases and len(self.phases) > 1:
+                self.statefulness = "multi_phase"
+            else:
+                self.statefulness = "workspace"
+        if not self.evidence_risk:
+            if self.family == TaskFamily.ADVERSARIAL:
+                self.evidence_risk = "adversarial"
+            elif any(tag in {"hallucination", "provenance", "privacy", "state_loss"} for tag in self.risk_tags):
+                self.evidence_risk = "high"
+            elif self.judge is not None or self.completion.execution_checks:
+                self.evidence_risk = "medium"
+            else:
+                self.evidence_risk = "low"
         if not self.prompt_variants:
             self.prompt_variants = [PromptVariant.CLEAR]
         else:
@@ -554,6 +620,11 @@ class TaskRunResult(BaseModel):
     trace_distribution: list[str] = Field(default_factory=list)
     tool_surface: list[str] = Field(default_factory=list)
     risk_tags: list[str] = Field(default_factory=list)
+    surfaces: list[str] = Field(default_factory=list)
+    turn_count: int = 0
+    artifact_count: int = 0
+    statefulness: str = ""
+    evidence_risk: str = ""
     similarity_hash: str = ""
     official: bool = False
     run_index: int
@@ -645,6 +716,11 @@ class TaskStats(BaseModel):
     trace_distribution: list[str] = Field(default_factory=list)
     tool_surface: list[str] = Field(default_factory=list)
     risk_tags: list[str] = Field(default_factory=list)
+    surfaces: list[str] = Field(default_factory=list)
+    turn_count: int = 0
+    artifact_count: int = 0
+    statefulness: str = ""
+    evidence_risk: str = ""
     similarity_hash: str = ""
     official: bool = False
     runs: int
@@ -673,8 +749,10 @@ class TaskStats(BaseModel):
     mean_input_tokens: float = 0.0
     mean_output_tokens: float = 0.0
     mean_reasoning_tokens: float = 0.0
+    mean_component_tokens: float = 0.0
     mean_total_tokens: float = 0.0
     mean_cost_usd: float = 0.0
+    component_tokens_per_pass: float = 0.0
     tokens_per_pass: float = 0.0
     cost_per_pass: float = 0.0
     worst_of_n: float = 0.0
@@ -803,8 +881,10 @@ class BenchmarkResult(BaseModel):
     overall_input_tokens: float = 0.0
     overall_output_tokens: float = 0.0
     overall_reasoning_tokens: float = 0.0
+    overall_component_tokens: float = 0.0
     overall_total_tokens: float = 0.0
     overall_cost_usd: float = 0.0
+    overall_component_tokens_per_pass: float = 0.0
     overall_tokens_per_pass: float = 0.0
     overall_cost_per_pass: float = 0.0
     overall_worst_of_n: float = 0.0

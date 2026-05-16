@@ -40,12 +40,18 @@ The advisory judge is optional and cannot replace deterministic verification.
 ```text
 task yaml + assets
   -> isolated workspace
+  -> evaluator-owned verifier snapshot
   -> optional local background services
   -> OpenClaw agent session
   -> transcript + tool-result capture
   -> completion / trajectory / behavior scoring
   -> reliability aggregation
 ```
+
+Completion verifiers, expected outputs, and hidden answer metadata are staged
+outside the agent workspace during official harness runs. Public tests can stay
+visible for self-verification, but the harness hash-checks protected files and
+scores against the evaluator copy.
 
 ## Public Task Inventory
 

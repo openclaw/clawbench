@@ -5,10 +5,13 @@ import pytest
 from clawbench.client import GatewayConfig
 from clawbench.adapters.base import AdapterContext, AgentAdapter, PhaseResult, StateQueryResult
 from clawbench.canonical import AdapterCapability, CanonicalPhase, StateQuery
+from clawbench.canonical.convert import from_task_definition
 from clawbench.harness import BenchmarkHarness
 from clawbench.schemas import (
     CompletionResult,
     CompletionSpec,
+    DeliveryOutcome,
+    FailureMode,
     FileState,
     JudgeExpectations,
     JudgeResult,
@@ -17,6 +20,7 @@ from clawbench.schemas import (
     TaskFamily,
     TaskRunResult,
     Tier,
+    TokenUsage,
     Transcript,
     TranscriptMessage,
     UserTurn,
@@ -51,6 +55,47 @@ async def test_run_agent_uses_staged_run_workspace(tmp_path: Path):
     assert agent_id == "agent-test-123"
     assert client.create_agent_calls == [(client.create_agent_calls[0][0], str(workspace))]
     assert task.id in client.create_agent_calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_empty_agent_output_scores_as_runtime_failure(tmp_path: Path):
+    task = TaskDefinition(
+        id="empty-output-task",
+        name="Empty Output Task",
+        tier=Tier.TIER1,
+        family=TaskFamily.CODING,
+        surface="coding",
+        user=SimulatedUser(turns=[UserTurn(message="Fix it")]),
+    )
+    canonical = from_task_definition(task)
+    harness = BenchmarkHarness(gateway_config=GatewayConfig(), model="test-model", randomize_order=False)
+    ctx = AdapterContext(
+        task=canonical,
+        workspace=tmp_path,
+        runtime_values={},
+        run_index=0,
+        model="test-model",
+        transcript=Transcript(),
+    )
+
+    class FakeAdapter:
+        async def verify_state_query(self, query, ctx):
+            raise AssertionError("no state queries expected")
+
+    result = await harness._score_adapter_task_run(
+        task=task,
+        canonical_task=canonical,
+        ctx=ctx,
+        duration_ms=100,
+        adapter=FakeAdapter(),
+        error=None,
+    )
+
+    assert result.run_score == 0.0
+    assert result.completion_result.score == 0.0
+    assert result.delivery_outcome == DeliveryOutcome.FAIL
+    assert result.failure_mode == FailureMode.ENVIRONMENT_UNAVAILABLE
+    assert result.error == "agent runtime unavailable: no assistant output"
 
 
 @pytest.mark.asyncio
@@ -133,6 +178,44 @@ def test_aggregate_reports_advisory_judge_metrics():
     assert task_result.judged_runs == 2
 
 
+def test_aggregate_reports_component_tokens_separately_from_total_tokens():
+    task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount")
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test-model",
+        task_ids=[task.id],
+        randomize_order=False,
+    )
+    runs = [
+        TaskRunResult(
+            task_id=task.id,
+            tier=task.tier.value,
+            family=task.family.value,
+            run_index=0,
+            run_score=1.0,
+            completion_result=CompletionResult(total_assertions=1, passed_assertions=1, score=1.0),
+            token_usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=1_000),
+        ),
+        TaskRunResult(
+            task_id=task.id,
+            tier=task.tier.value,
+            family=task.family.value,
+            run_index=1,
+            run_score=1.0,
+            completion_result=CompletionResult(total_assertions=1, passed_assertions=1, score=1.0),
+            token_usage=TokenUsage(input_tokens=20, output_tokens=10, total_tokens=2_000),
+        ),
+    ]
+
+    result = harness._aggregate([task], {task.id: runs})
+    task_result = result.task_results[0]
+
+    assert task_result.mean_component_tokens == pytest.approx(22.5)
+    assert task_result.mean_total_tokens == pytest.approx(1500)
+    assert result.overall_component_tokens == pytest.approx(22.5)
+    assert result.overall_total_tokens == pytest.approx(1500)
+
+
 def test_compose_result_from_task_stats_supports_parallel_environment_metadata():
     task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount").model_copy(deep=True)
     task.category = "software_engineering"
@@ -141,6 +224,11 @@ def test_compose_result_from_task_stats_supports_parallel_environment_metadata()
     task.trace_distribution = ["read_heavy", "edit_heavy", "execute_heavy", "recovery_heavy"]
     task.tool_surface = ["filesystem", "shell"]
     task.risk_tags = ["code_change"]
+    task.surfaces = ["repo", "shell"]
+    task.turn_count = 3
+    task.artifact_count = 2
+    task.statefulness = "workspace"
+    task.evidence_risk = "low"
     harness = BenchmarkHarness(
         gateway_config=GatewayConfig(),
         model="test-model",
@@ -192,9 +280,19 @@ def test_compose_result_from_task_stats_supports_parallel_environment_metadata()
         "trace_distribution": 4,
         "tool_surface": 2,
         "risk_tag": 1,
+        "surfaces": 2,
+        "statefulness": 1,
+        "evidence_risk": 1,
     }
+    assert merged_result.environment["turn_count_range"] == {"min": 3, "max": 3}
+    assert merged_result.environment["artifact_count_range"] == {"min": 2, "max": 2}
     assert merged_result.task_results[0].category == "software_engineering"
     assert merged_result.task_results[0].domain == "devtools"
+    assert merged_result.task_results[0].surfaces == ["repo", "shell"]
+    assert merged_result.task_results[0].turn_count == 3
+    assert merged_result.task_results[0].artifact_count == 2
+    assert merged_result.task_results[0].statefulness == "workspace"
+    assert merged_result.task_results[0].evidence_risk == "low"
 
     category = {item.value: item for item in merged_result.category_results}
     assert category["software_engineering"].task_ids == [task.id]
@@ -241,6 +339,43 @@ async def test_run_records_adapter_surface(monkeypatch):
 
     assert result.environment["adapter"] == "openclaw"
     assert "hermes" in result.environment["known_adapters"]
+
+
+@pytest.mark.asyncio
+async def test_trace_dir_archives_per_run_transcripts(monkeypatch, tmp_path: Path):
+    task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount")
+
+    async def fake_run_single(self, current_task, run_index: int):
+        return TaskRunResult(
+            task_id=current_task.id,
+            tier=current_task.tier.value,
+            family=current_task.family.value,
+            run_index=run_index,
+            run_score=1.0,
+            transcript=Transcript(messages=[TranscriptMessage(role="assistant", text="done")]),
+            completion_result=CompletionResult(total_assertions=1, passed_assertions=1, score=1.0),
+        )
+
+    monkeypatch.setattr("clawbench.harness.load_all_tasks", lambda **_: [task])
+    monkeypatch.setattr(BenchmarkHarness, "_run_single", fake_run_single)
+
+    trace_dir = tmp_path / "traces"
+    harness = BenchmarkHarness(
+        gateway_config=GatewayConfig(),
+        model="test-model",
+        task_ids=[task.id],
+        runs_per_task=1,
+        randomize_order=False,
+        print_report=False,
+        quiet=True,
+        trace_dir=trace_dir,
+    )
+
+    await harness.run()
+
+    trace_path = trace_dir / task.id / "run0.json"
+    assert trace_path.exists()
+    assert "done" in trace_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

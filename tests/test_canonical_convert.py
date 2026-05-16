@@ -162,6 +162,11 @@ def test_files_only_task_requires_only_files_and_execution() -> None:
     task.trace_distribution = ["read_heavy", "edit_heavy", "execute_heavy"]
     task.tool_surface = ["filesystem", "shell"]
     task.risk_tags = ["code_regression"]
+    task.surfaces = ["repo", "shell"]
+    task.turn_count = 2
+    task.artifact_count = 1
+    task.statefulness = "workspace"
+    task.evidence_risk = "low"
 
     canonical = from_task_definition(task)
     assert isinstance(canonical, CanonicalTask)
@@ -175,6 +180,11 @@ def test_files_only_task_requires_only_files_and_execution() -> None:
     assert canonical.trace_distribution == ["read_heavy", "edit_heavy", "execute_heavy"]
     assert canonical.tool_surface == ["filesystem", "shell"]
     assert canonical.risk_tags == ["code_regression"]
+    assert canonical.surfaces == ["repo", "shell"]
+    assert canonical.turn_count == 2
+    assert canonical.artifact_count == 1
+    assert canonical.statefulness == "workspace"
+    assert canonical.evidence_risk == "low"
     # Seed state should carry the asset pack through.
     assert len(canonical.assets.seed_state) == 1
     assert canonical.assets.seed_state[0].kind == "file"

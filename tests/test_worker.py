@@ -82,6 +82,160 @@ def test_configure_browser_runtime_pins_subagents_to_active_model(monkeypatch):
     }
 
 
+def test_configure_browser_runtime_sets_requested_agent_runtime(monkeypatch):
+    worker = EvalWorker(JobQueue())
+    worker.set_active_model("openai/gpt-5.5")
+    state_dir = Path("/tmp/test-openclaw-config-runtime")
+    if state_dir.exists():
+        import shutil
+
+        shutil.rmtree(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    config_path = state_dir / "openclaw.json"
+    config_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("CLAWBENCH_OPENCLAW_AGENT_RUNTIME", "codex")
+
+    worker._configure_browser_runtime(["node", "/openclaw/dist/cli.js"], {"HOME": "/tmp/home"})
+
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    assert data["agents"]["defaults"]["agentRuntime"]["id"] == "codex"
+    assert data["agents"]["defaults"]["models"]["openai/gpt-5.5"]["agentRuntime"]["id"] == "codex"
+
+
+def test_configure_browser_runtime_strips_source_agent_runtime_when_unset(monkeypatch):
+    worker = EvalWorker(JobQueue())
+    worker.set_active_model("anthropic/claude-sonnet-4-6")
+    state_dir = Path("/tmp/test-openclaw-config-runtime-strip")
+    if state_dir.exists():
+        import shutil
+
+        shutil.rmtree(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    config_path = state_dir / "openclaw.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "defaults": {
+                        "agentRuntime": {"id": "codex"},
+                        "models": {
+                            "openai/gpt-5.5": {"agentRuntime": {"id": "codex"}},
+                            "anthropic/claude-sonnet-4-6": {
+                                "agentRuntime": {"id": "codex"}
+                            },
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    monkeypatch.delenv("CLAWBENCH_OPENCLAW_AGENT_RUNTIME", raising=False)
+    monkeypatch.delenv("OPENCLAW_AGENT_RUNTIME", raising=False)
+
+    worker._configure_browser_runtime(["node", "/openclaw/dist/cli.js"], {"HOME": "/tmp/home"})
+
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    defaults = data["agents"]["defaults"]
+    assert "agentRuntime" not in defaults
+    assert "agentRuntime" not in defaults["models"]["openai/gpt-5.5"]
+    assert "agentRuntime" not in defaults["models"]["anthropic/claude-sonnet-4-6"]
+    assert defaults["model"]["primary"] == "anthropic/claude-sonnet-4-6"
+
+
+def test_sanitize_lane_state_removes_schema_incompatible_whatsapp_config(tmp_path):
+    worker = EvalWorker(JobQueue())
+    worker.set_active_model("openai-codex/gpt-5.5")
+    config_path = tmp_path / "openclaw.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "channels": {
+                    "telegram": {"enabled": True, "streaming": "partial"},
+                    "discord": {"enabled": True, "streaming": {"mode": "partial"}},
+                    "whatsapp": {
+                        "enabled": True,
+                        "accounts": {"default": {"name": "WhatsApp", "enabled": True}},
+                        "groupAllowFrom": ["*"],
+                    },
+                },
+                "plugins": {
+                    "allow": ["openai", "whatsapp", "marxbiotech-git-tools"],
+                    "entries": {
+                        "whatsapp": {"enabled": True},
+                        "marxbiotech-git-tools": {"enabled": True},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    worker._sanitize_lane_state_dir(tmp_path)
+
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "whatsapp" not in data["channels"]
+    assert data["channels"]["telegram"]["enabled"] is False
+    assert data["channels"]["telegram"]["streaming"] == {"mode": "off"}
+    assert data["channels"]["discord"]["enabled"] is False
+    assert data["channels"]["discord"]["streaming"] == {"mode": "off"}
+    assert data["plugins"]["allow"] == ["openai"]
+    assert "whatsapp" not in data["plugins"]["entries"]
+    assert "marxbiotech-git-tools" not in data["plugins"]["entries"]
+    assert data["agents"]["defaults"]["model"]["primary"] == "openai-codex/gpt-5.5"
+    assert (tmp_path / "exec-approvals.json").exists()
+
+
+def test_sanitize_lane_state_strips_codex_runtime_when_runtime_unset(tmp_path, monkeypatch):
+    worker = EvalWorker(JobQueue())
+    worker.set_active_model("anthropic/claude-opus-4-7")
+    monkeypatch.delenv("CLAWBENCH_OPENCLAW_AGENT_RUNTIME", raising=False)
+    monkeypatch.delenv("OPENCLAW_AGENT_RUNTIME", raising=False)
+    config_path = tmp_path / "openclaw.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "defaults": {
+                        "agentRuntime": {"id": "codex"},
+                        "models": {
+                            "anthropic/claude-opus-4-7": {
+                                "agentRuntime": {"id": "codex"}
+                            }
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    worker._sanitize_lane_state_dir(tmp_path)
+
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    defaults = data["agents"]["defaults"]
+    assert "agentRuntime" not in defaults
+    assert "agentRuntime" not in defaults["models"]["anthropic/claude-opus-4-7"]
+    assert defaults["model"]["primary"] == "anthropic/claude-opus-4-7"
+
+
+def test_seed_lane_codex_home_copies_auth_and_config(tmp_path, monkeypatch):
+    worker = EvalWorker(JobQueue())
+    source = tmp_path / "codex-source"
+    source.mkdir()
+    (source / "auth.json").write_text('{"token":"test"}', encoding="utf-8")
+    (source / "config.toml").write_text("model = 'gpt-5.5'\n", encoding="utf-8")
+    lane_home = tmp_path / "lane-home"
+    monkeypatch.setenv("CODEX_CONFIG_SOURCE", str(source))
+
+    worker._seed_lane_codex_home(lane_home)
+
+    assert (lane_home / ".codex" / "auth.json").read_text(encoding="utf-8") == '{"token":"test"}'
+    assert (lane_home / ".codex" / "config.toml").read_text(encoding="utf-8") == "model = 'gpt-5.5'\n"
+
+
 @pytest.mark.asyncio
 async def test_prepare_benchmark_run_restarts_gateway_on_task_boundary(monkeypatch):
     worker = EvalWorker(JobQueue())
@@ -154,6 +308,22 @@ def test_plan_parallel_lanes_serializes_browser_tasks():
         if not lane.browser_lane
         for task in lane.tasks
     )
+
+
+def test_plan_parallel_lanes_can_distribute_browser_tasks(monkeypatch):
+    monkeypatch.setenv("CLAWBENCH_SERIALIZE_BROWSER_LANES", "0")
+    worker = EvalWorker(JobQueue())
+    tasks = [
+        DummyTask("t1", "tier1", "coding"),
+        DummyTask("t2", "tier2", "browser"),
+        DummyTask("t3", "tier3", "browser"),
+    ]
+
+    lanes = worker._plan_parallel_lanes(tasks, requested_parallel_lanes=3)
+
+    assert len(lanes) == 3
+    assert all(len(lane.tasks) == 1 for lane in lanes)
+    assert sorted(task.id for lane in lanes for task in lane.tasks) == ["t1", "t2", "t3"]
 
 
 def test_materialize_lane_runtime_spaces_ports_and_copies_auth(tmp_path: Path, monkeypatch):

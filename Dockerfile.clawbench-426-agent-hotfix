@@ -2,6 +2,7 @@
 
 ARG BASE=openclaw-426-agent-hotfix:latest
 FROM ${BASE}
+ARG CODEX_CLI_VERSION=0.129.0
 
 USER root
 
@@ -20,8 +21,14 @@ RUN npm install -g playwright@1.59.1 && \
     test -x "$CHROME_PATH" && \
     ln -sf "$CHROME_PATH" /usr/bin/chromium
 
+RUN npm install -g @openai/codex@${CODEX_CLI_VERSION} && \
+    codex --version
+
 ENV HOME=/home/node PATH=/home/node/.local/bin:$PATH
 WORKDIR /home/node/app
+
+ARG CLAWBENCH_SOURCE_REV=unknown
+RUN printf '%s\n' "$CLAWBENCH_SOURCE_REV" >/tmp/clawbench-source-rev
 
 COPY --chown=node:node pyproject.toml README.md CLAWBENCH_V0_4_SPEC.md PARTNER_TRACE_SPEC.md ./
 COPY --chown=node:node clawbench/ clawbench/

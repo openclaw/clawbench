@@ -12,9 +12,24 @@ data/
 .DS_Store
 .clawbench/
 reports/
+crabbox-results-*/
+private_tools/
+testbox_payload*.tgz
+testbox_run*.sh
+.crabbox.yaml
+.openclaw/
+memory/
+AGENTS.md
+HEARTBEAT.md
+IDENTITY.md
+MEMORY.md
+SOUL.md
+TOOLS.md
+USER.md
 scripts/__pycache__/
 scripts/*.tmp
 scripts/*.local.py
+scripts/report_openclaw_*.py
 
 # Task set is being split into a private holdout + a new public set.
 # Until the public set lands, keep the current tasks/ local-only.

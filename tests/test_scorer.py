@@ -1,5 +1,6 @@
 from clawbench.scorer import (
     classify_delivery_outcome,
+    classify_error_failure_mode,
     classify_failure_mode,
     combine_run_score,
     evaluate_behavior,
@@ -38,8 +39,8 @@ def test_combine_run_score_caps_judge_when_deterministic_verifier_present():
     deterministic axes allow.
     """
     # Deterministic floor NOT met, judge reports a perfect 1.0 — judge
-    # must not rescue the score. The run score should equal what the
-    # deterministic path alone produces for completion=0.5.
+    # must not rescue the score. The run score should equal the gated
+    # deterministic path for completion=0.5.
     with_broken_det = combine_run_score(
         completion=0.5,
         trajectory=1.0,
@@ -51,8 +52,22 @@ def test_combine_run_score_caps_judge_when_deterministic_verifier_present():
         completion=0.5,
         trajectory=1.0,
         behavior=1.0,
+        has_deterministic_verifier=True,
     )
     assert with_broken_det == without_judge
+
+
+def test_combine_run_score_gates_failed_deterministic_completion():
+    ungated = combine_run_score(completion=0.0, trajectory=1.0, behavior=1.0)
+    gated = combine_run_score(
+        completion=0.0,
+        trajectory=1.0,
+        behavior=1.0,
+        has_deterministic_verifier=True,
+    )
+
+    assert ungated == 0.5556
+    assert gated == 0.1944
 
 
 def test_combine_run_score_judge_lifts_at_most_10pct_when_deterministic_passes():
@@ -154,6 +169,193 @@ def test_classify_failure_mode_prefers_unsafe_mutation():
     )
 
     assert failure_mode == FailureMode.UNSAFE_MUTATION
+
+
+def test_classify_failure_mode_empty_agent_output_is_infra():
+    task = TaskDefinition(
+        id="test-task",
+        name="Test Task",
+        tier=Tier.TIER1,
+        family=TaskFamily.CODING,
+        surface="coding",
+        user=SimulatedUser(turns=[UserTurn(message="Fix it")]),
+    )
+
+    failure_mode = classify_failure_mode(
+        task=task,
+        transcript=Transcript(),
+        completion_result=CompletionResult(
+            total_assertions=1,
+            passed_assertions=0,
+            failed_assertions=["EXEC pytest: failed"],
+        ),
+        trajectory_result=TrajectoryResult(),
+        behavior_result=BehaviorResult(score=0.0),
+        error=None,
+    )
+
+    assert failure_mode == FailureMode.ENVIRONMENT_UNAVAILABLE
+
+
+def test_classify_failure_mode_aborted_only_agent_output_is_infra():
+    task = TaskDefinition(
+        id="test-task",
+        name="Test Task",
+        tier=Tier.TIER1,
+        family=TaskFamily.CODING,
+        surface="coding",
+        user=SimulatedUser(turns=[UserTurn(message="Fix it")]),
+    )
+
+    failure_mode = classify_failure_mode(
+        task=task,
+        transcript=Transcript(messages=[TranscriptMessage(role="assistant", text="This operation was aborted")]),
+        completion_result=CompletionResult(
+            total_assertions=1,
+            passed_assertions=0,
+            failed_assertions=["EXEC pytest: failed"],
+        ),
+        trajectory_result=TrajectoryResult(),
+        behavior_result=BehaviorResult(score=0.0),
+        error=None,
+    )
+
+    assert failure_mode == FailureMode.ENVIRONMENT_UNAVAILABLE
+
+
+def test_classify_failure_mode_provider_auth_failure_is_infra():
+    task = TaskDefinition(
+        id="test-task",
+        name="Test Task",
+        tier=Tier.TIER1,
+        family=TaskFamily.CODING,
+        surface="coding",
+        user=SimulatedUser(turns=[UserTurn(message="Fix it")]),
+    )
+
+    failure_mode = classify_failure_mode(
+        task=task,
+        transcript=Transcript(
+            messages=[
+                TranscriptMessage(
+                    role="assistant",
+                    text='⚠️ Agent failed before reply: No API key found for provider "anthropic".',
+                )
+            ]
+        ),
+        completion_result=CompletionResult(
+            total_assertions=1,
+            passed_assertions=0,
+            failed_assertions=["EXEC pytest: failed"],
+        ),
+        trajectory_result=TrajectoryResult(),
+        behavior_result=BehaviorResult(score=0.0),
+        error=None,
+    )
+
+    assert failure_mode == FailureMode.ENVIRONMENT_UNAVAILABLE
+
+
+def test_classify_failure_mode_browser_tool_misuse_is_not_infra():
+    task = TaskDefinition(
+        id="browser-task",
+        name="Browser Task",
+        tier=Tier.TIER3,
+        family=TaskFamily.BROWSER,
+        surface="browser",
+        user=SimulatedUser(turns=[UserTurn(message="Fix the page")]),
+    )
+    transcript = Transcript(
+        messages=[
+            TranscriptMessage(
+                role="assistant",
+                tool_calls=[
+                    ToolCall(
+                        name="browser",
+                        family="browser",
+                        success=False,
+                        output="Error: page.evaluate: Invalid evaluate function",
+                    )
+                ],
+            )
+        ]
+    )
+
+    failure_mode = classify_failure_mode(
+        task=task,
+        transcript=transcript,
+        completion_result=CompletionResult(
+            total_assertions=1,
+            passed_assertions=0,
+            failed_assertions=["EXEC verifier: failed"],
+        ),
+        trajectory_result=TrajectoryResult(required_families_missing=["execute"]),
+        behavior_result=BehaviorResult(score=1.0),
+        error=None,
+    )
+
+    assert failure_mode == FailureMode.VERIFICATION_SKIPPED
+
+
+def test_classify_failure_mode_browser_service_failure_stays_infra():
+    task = TaskDefinition(
+        id="browser-task",
+        name="Browser Task",
+        tier=Tier.TIER3,
+        family=TaskFamily.BROWSER,
+        surface="browser",
+        user=SimulatedUser(turns=[UserTurn(message="Fix the page")]),
+    )
+    transcript = Transcript(
+        messages=[
+            TranscriptMessage(
+                role="assistant",
+                tool_calls=[
+                    ToolCall(
+                        name="browser",
+                        family="browser",
+                        success=False,
+                        output="Error: could not connect to CDP: connection refused",
+                    )
+                ],
+            )
+        ]
+    )
+
+    failure_mode = classify_failure_mode(
+        task=task,
+        transcript=transcript,
+        completion_result=CompletionResult(
+            total_assertions=1,
+            passed_assertions=0,
+            failed_assertions=["EXEC verifier: failed"],
+        ),
+        trajectory_result=TrajectoryResult(required_families_missing=["execute"]),
+        behavior_result=BehaviorResult(score=1.0),
+        error=None,
+    )
+
+    assert failure_mode == FailureMode.BROWSER_NAVIGATION_FAILURE
+
+
+def test_classify_error_failure_mode_browser_model_error_is_state_regression():
+    task = TaskDefinition(
+        id="browser-task",
+        name="Browser Task",
+        tier=Tier.TIER3,
+        family=TaskFamily.BROWSER,
+        surface="browser",
+        user=SimulatedUser(turns=[UserTurn(message="Fix the page")]),
+    )
+
+    assert (
+        classify_error_failure_mode(task, "page.evaluate: Invalid evaluate function")
+        == FailureMode.STATE_REGRESSION
+    )
+    assert (
+        classify_error_failure_mode(task, "could not connect to CDP: connection refused")
+        == FailureMode.BROWSER_NAVIGATION_FAILURE
+    )
 
 
 def test_classify_delivery_outcome_supports_partial_credit():

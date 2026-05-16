@@ -52,7 +52,7 @@ class SubmissionRequest(BaseModel):
     api_key_env: str = ""  # Env var name holding the API key (NOT the key itself)
     judge_model: str = ""
     runs_per_task: int = Field(default=3, ge=1, le=10)
-    max_parallel_lanes: int = Field(default=1, ge=1, le=8)
+    max_parallel_lanes: int = Field(default=1, ge=1, le=128)
     tier: str | None = None  # Filter to a specific tier
     scenario: str | None = None
     task_ids: list[str] = Field(default_factory=list)
@@ -163,7 +163,7 @@ class JobQueue:
                     f"Requested runs_per_task={request.runs_per_task}, but this deployment allows at most {max_runs}."
                 )
 
-            max_lanes = _env_int("CLAWBENCH_MAX_LANES_PER_SUBMISSION", 4, minimum=1, maximum=32)
+            max_lanes = _env_int("CLAWBENCH_MAX_LANES_PER_SUBMISSION", 4, minimum=1, maximum=128)
             if request.max_parallel_lanes > max_lanes:
                 raise ValueError(
                     f"Requested max_parallel_lanes={request.max_parallel_lanes}, but this deployment allows at most {max_lanes}."

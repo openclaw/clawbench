@@ -27,6 +27,7 @@ set -u
 : "${HERMES_MAX_ITERATIONS:=90}"
 : "${HERMES_STEP_TIMEOUT_SECONDS:=60}"
 : "${OPENCLAW_EXEC_HOST:=gateway}"
+: "${CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING:=searchable}"
 
 cd /home/node/app
 mkdir -p "$SWEEP_LOGDIR" /data/run_cache
@@ -36,7 +37,7 @@ export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"
 export OPENCLAW_SKIP_GMAIL_WATCHER=1
 export OPENCLAW_SKIP_CANVAS_HOST=1
 export OPENCLAW_NO_RESPAWN=1
-export CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY=1
+export CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY="${CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY:-1}"
 export NODE_OPTIONS="${NODE_OPTIONS:-"--max-old-space-size=4096"}"
 if command -v npm >/dev/null 2>&1; then
   export NODE_PATH="${NODE_PATH:-$(npm root -g 2>/dev/null || true)}"
@@ -73,6 +74,16 @@ mkdir -p "$FRESH_STATE" "$FRESH_HOME/.config"
 if [ -f "$SRC_STATE/openclaw.json" ]; then
   cp "$SRC_STATE/openclaw.json" "$FRESH_STATE/openclaw.json"
 fi
+CODEX_STATE_SOURCE="${CODEX_CONFIG_SOURCE:-/config/codex}"
+if [ -d "$CODEX_STATE_SOURCE" ]; then
+  mkdir -p "$FRESH_HOME/.codex"
+  for codex_file in auth.json config.toml; do
+    if [ -f "$CODEX_STATE_SOURCE/$codex_file" ]; then
+      cp "$CODEX_STATE_SOURCE/$codex_file" "$FRESH_HOME/.codex/$codex_file"
+      chmod 600 "$FRESH_HOME/.codex/$codex_file" 2>/dev/null || true
+    fi
+  done
+fi
 mkdir -p \
   "$FRESH_STATE/agents" \
   "$FRESH_STATE/workspace" \
@@ -95,6 +106,25 @@ export XDG_CONFIG_HOME="$FRESH_HOME/.config"
 export HERMES_HOME_BASE="${HERMES_HOME_BASE:-$FRESH_HOME/.hermes}"
 export HERMES_HOME="$HERMES_HOME_BASE"
 mkdir -p "$HERMES_HOME"
+SWEEP_AGENT_RUNTIME="${SWEEP_AGENT_RUNTIME:-${CLAWBENCH_OPENCLAW_AGENT_RUNTIME:-${OPENCLAW_AGENT_RUNTIME:-}}}"
+if [ -n "$SWEEP_AGENT_RUNTIME" ]; then
+  export OPENCLAW_AGENT_RUNTIME="$SWEEP_AGENT_RUNTIME"
+  export CLAWBENCH_OPENCLAW_AGENT_RUNTIME="$SWEEP_AGENT_RUNTIME"
+fi
+case "$SWEEP_MODEL:${SWEEP_AGENT_RUNTIME:-}" in
+  *:codex|codex/*)
+    export OPENCLAW_CODEX_APP_SERVER_MODE="${OPENCLAW_CODEX_APP_SERVER_MODE:-yolo}"
+    export OPENCLAW_CODEX_APP_SERVER_APPROVAL_POLICY="${OPENCLAW_CODEX_APP_SERVER_APPROVAL_POLICY:-never}"
+    export OPENCLAW_CODEX_APP_SERVER_SANDBOX="${OPENCLAW_CODEX_APP_SERVER_SANDBOX:-danger-full-access}"
+    ;;
+esac
+case "$SWEEP_MODEL" in
+  codex/*)
+    export OPENCLAW_CODEX_APP_SERVER_MODE="${OPENCLAW_CODEX_APP_SERVER_MODE:-yolo}"
+    export OPENCLAW_CODEX_APP_SERVER_APPROVAL_POLICY="${OPENCLAW_CODEX_APP_SERVER_APPROVAL_POLICY:-never}"
+    export OPENCLAW_CODEX_APP_SERVER_SANDBOX="${OPENCLAW_CODEX_APP_SERVER_SANDBOX:-danger-full-access}"
+    ;;
+esac
 
 if [ "$SWEEP_ADAPTER" = "hermes" ]; then
   unset HERMES_PROVIDER
@@ -145,6 +175,7 @@ if isinstance(agents, dict):
 
 channels = data.get("channels")
 if isinstance(channels, dict):
+    channels.pop("whatsapp", None)
     for channel in channels.values():
         if isinstance(channel, dict):
             channel["enabled"] = False
@@ -156,7 +187,7 @@ if isinstance(channels, dict):
 
 plugins = data.get("plugins")
 if isinstance(plugins, dict):
-    stale = {"marxbiotech-git-tools", "lab"}
+    stale = {"marxbiotech-git-tools", "lab", "whatsapp"}
     allow = plugins.get("allow")
     if isinstance(allow, list):
         plugins["allow"] = [item for item in allow if item not in stale]
@@ -178,6 +209,80 @@ def set_nested(root, dotted, value):
     cursor[parts[-1]] = value
 
 
+def set_model_agent_runtime_policy(root, model_ref, agent_runtime):
+    agents = root.setdefault("agents", {})
+    if not isinstance(agents, dict):
+        return
+    defaults = agents.setdefault("defaults", {})
+    if not isinstance(defaults, dict):
+        return
+    models = defaults.setdefault("models", {})
+    if not isinstance(models, dict):
+        return
+    model_cfg = models.setdefault(model_ref, {})
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+        models[model_ref] = model_cfg
+    model_cfg["agentRuntime"] = {"id": agent_runtime}
+
+    if agent_runtime == "codex":
+        plugins_cfg = root.setdefault("plugins", {})
+        if isinstance(plugins_cfg, dict):
+            allow = plugins_cfg.get("allow")
+            if isinstance(allow, list) and "codex" not in allow:
+                allow.append("codex")
+
+
+def strip_agent_runtime_policy(root):
+    agents = root.get("agents")
+    if not isinstance(agents, dict):
+        return
+    defaults = agents.get("defaults")
+    if not isinstance(defaults, dict):
+        return
+    defaults.pop("agentRuntime", None)
+    models = defaults.get("models")
+    if isinstance(models, dict):
+        for model_cfg in models.values():
+            if isinstance(model_cfg, dict):
+                model_cfg.pop("agentRuntime", None)
+
+
+def ensure_codex_dynamic_tools_config(root, loading):
+    if loading not in {"searchable", "direct"}:
+        raise SystemExit(f"invalid CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING={loading!r}")
+    plugins_cfg = root.setdefault("plugins", {})
+    if not isinstance(plugins_cfg, dict):
+        return
+    allow = plugins_cfg.setdefault("allow", [])
+    if isinstance(allow, list) and "codex" not in allow:
+        allow.append("codex")
+    entries = plugins_cfg.setdefault("entries", {})
+    if not isinstance(entries, dict):
+        entries = {}
+        plugins_cfg["entries"] = entries
+    codex = entries.setdefault("codex", {})
+    if not isinstance(codex, dict):
+        codex = {}
+        entries["codex"] = codex
+    config = codex.setdefault("config", {})
+    if not isinstance(config, dict):
+        config = {}
+        codex["config"] = config
+    config["codexDynamicToolsLoading"] = loading
+
+
+def parse_optional_bool_env(name):
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return None
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise SystemExit(f"invalid {name}={raw!r}; expected true or false")
+
+
 set_nested(data, "browser.headless", True)
 set_nested(data, "browser.noSandbox", True)
 set_nested(data, "gateway.reload.mode", "off")
@@ -194,6 +299,27 @@ model = os.environ.get("SWEEP_MODEL", "").strip()
 if model:
     set_nested(data, "agents.defaults.model.primary", model)
     set_nested(data, "agents.defaults.subagents.model.primary", model)
+agent_runtime = os.environ.get("SWEEP_AGENT_RUNTIME", "").strip()
+legacy_config = os.environ.get("CLAWBENCH_OPENCLAW_LEGACY_CONFIG", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+if agent_runtime and not legacy_config:
+    set_nested(data, "agents.defaults.agentRuntime.id", agent_runtime)
+    if model:
+        set_model_agent_runtime_policy(data, model, agent_runtime)
+elif legacy_config:
+    strip_agent_runtime_policy(data)
+if agent_runtime == "codex" or model.startswith("codex/"):
+    ensure_codex_dynamic_tools_config(
+        data,
+        os.environ.get("CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING", "searchable").strip(),
+    )
+tool_search_enabled = parse_optional_bool_env("CLAWBENCH_OPENCLAW_TOOL_SEARCH")
+if tool_search_enabled is not None:
+    set_nested(data, "tools.toolSearch", tool_search_enabled)
 
 tmp_path = cfg_path.with_suffix(".json.tmp")
 tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -297,6 +423,9 @@ echo "===== CONTAINER ADAPTER EVAL START $(date '+%Y-%m-%d %H:%M:%S') ====="
 echo "uid:      $(id -u) ($(id -un 2>/dev/null || true))"
 echo "adapter:  $SWEEP_ADAPTER"
 echo "model:    $SWEEP_MODEL"
+echo "runtime:  ${SWEEP_AGENT_RUNTIME:-default}"
+echo "codex dynamic tools: ${CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING:-default}"
+echo "pi tool search: ${CLAWBENCH_OPENCLAW_TOOL_SEARCH:-default}"
 echo "runs:     $SWEEP_RUNS"
 echo "execHost: $OPENCLAW_EXEC_HOST"
 echo "out:      $OUT"
