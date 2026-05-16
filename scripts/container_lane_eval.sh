@@ -297,7 +297,7 @@ def sanitize_legacy_plugins(root, model_ref):
             entries.pop(item, None)
 
 
-def ensure_codex_dynamic_tools_config(root, loading):
+def ensure_codex_plugin_allowed(root, loading):
     if loading not in {"searchable", "direct"}:
         raise SystemExit(f"invalid CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING={loading!r}")
     plugins_cfg = root.setdefault("plugins", {})
@@ -306,19 +306,11 @@ def ensure_codex_dynamic_tools_config(root, loading):
     allow = plugins_cfg.setdefault("allow", [])
     if isinstance(allow, list) and "codex" not in allow:
         allow.append("codex")
-    entries = plugins_cfg.setdefault("entries", {})
-    if not isinstance(entries, dict):
-        entries = {}
-        plugins_cfg["entries"] = entries
-    codex = entries.setdefault("codex", {})
-    if not isinstance(codex, dict):
-        codex = {}
-        entries["codex"] = codex
-    config = codex.setdefault("config", {})
-    if not isinstance(config, dict):
-        config = {}
-        codex["config"] = config
-    config["codexDynamicToolsLoading"] = loading
+    entries = plugins_cfg.get("entries")
+    if isinstance(entries, dict):
+        codex = entries.get("codex")
+        if isinstance(codex, dict):
+            codex.pop("config", None)
 
 
 def parse_optional_bool_env(name):
@@ -392,7 +384,7 @@ else:
     strip_agent_runtime_policy(data)
     sanitize_legacy_plugins(data, model_ref)
 if agent_runtime == "codex" or model_ref.startswith("codex/"):
-    ensure_codex_dynamic_tools_config(
+    ensure_codex_plugin_allowed(
         data,
         os.environ.get("CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING", "searchable").strip(),
     )

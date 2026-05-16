@@ -17,3 +17,13 @@ def test_public_dockerfiles_copy_public_task_sets():
         assert "COPY --chown=node:node baselines/ baselines/" in contents
         assert "COPY --chown=node:node tasks-domain/ tasks-domain/" in contents
         assert "COPY --chown=node:node tasks/ tasks/" not in contents
+
+
+def test_container_eval_scripts_do_not_write_codex_plugin_config():
+    repo_root = Path(__file__).resolve().parent.parent
+
+    for script_name in ("scripts/container_adapter_eval.sh", "scripts/container_lane_eval.sh"):
+        contents = (repo_root / script_name).read_text(encoding="utf-8")
+
+        assert "codex.setdefault(\"config\"" not in contents
+        assert "config[\"codexDynamicToolsLoading\"]" not in contents
