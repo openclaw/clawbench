@@ -37,7 +37,7 @@ export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"
 export OPENCLAW_SKIP_GMAIL_WATCHER=1
 export OPENCLAW_SKIP_CANVAS_HOST=1
 export OPENCLAW_NO_RESPAWN=1
-export CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY="${CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY:-1}"
+export CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY="${CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY:-0}"
 export NODE_OPTIONS="${NODE_OPTIONS:-"--max-old-space-size=4096"}"
 if command -v npm >/dev/null 2>&1; then
   export NODE_PATH="${NODE_PATH:-$(npm root -g 2>/dev/null || true)}"
@@ -329,7 +329,7 @@ set_nested(data, "tools.exec.host", exec_host)
 set_nested(data, "tools.exec.security", "full")
 set_nested(data, "tools.exec.ask", "off")
 set_nested(data, "approvals.exec.enabled", False)
-if parse_optional_bool_env("CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY") is not False:
+if parse_optional_bool_env("CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY") is True:
     set_nested(data, "gateway.controlUi.allowInsecureAuth", True)
     set_nested(data, "gateway.controlUi.dangerouslyDisableDeviceAuth", True)
 model = os.environ.get("SWEEP_MODEL", "").strip()
