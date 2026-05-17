@@ -20,7 +20,6 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from clawbench.adapters import register_adapter
 from clawbench.adapters.base import (
@@ -37,16 +36,12 @@ from clawbench.canonical import (
 )
 from clawbench.client import GatewayClient, GatewayConfig
 from clawbench.environment_files import (
-    memory_visible_in_transcript,
     resolve_json_path,
     verify_memory_fallback,
 )
 from clawbench.schemas import (
-    CronState,
     MemoryState,
     PromptVariant,
-    SessionState,
-    Transcript,
 )
 from clawbench.session_labels import unique_session_label
 from clawbench.simulated_user import UserSimulator
