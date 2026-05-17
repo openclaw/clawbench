@@ -35,12 +35,60 @@ STALE_EVALUATION_SECONDS = max(
     int(os.environ.get("CLAWBENCH_STALE_EVALUATION_SECONDS", "1800")),
 )
 OPENCLAW_EVAL_EXEC_HOSTS = {"auto", "gateway", "sandbox", "node"}
-OPENCLAW_EVAL_SYSTEM_PROMPT = (
-    "You are running an OpenClaw benchmark task. Complete the user's request in the current "
-    "workspace using the available tools when needed. For file, code, browser, shell, or memory "
-    "tasks, make the requested changes directly and verify them when practical. Do not ask "
-    "follow-up questions during the benchmark. Keep any final reply brief."
-)
+CODEX_OPENAI_AUTH_PROFILE_ID = "openai-codex:clawbench-env"
+
+
+def _serialize_browser_lanes_enabled() -> bool:
+    return os.environ.get("CLAWBENCH_SERIALIZE_BROWSER_LANES", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def _openclaw_legacy_config_enabled() -> bool:
+    return os.environ.get("CLAWBENCH_OPENCLAW_LEGACY_CONFIG", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _disable_gateway_device_identity_enabled() -> bool:
+    return os.environ.get("CLAWBENCH_DISABLE_GATEWAY_DEVICE_IDENTITY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _set_nested(data: dict, path: str, value: object) -> bool:
+    parts = path.split(".")
+    cursor = data
+    for part in parts[:-1]:
+        child = cursor.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            cursor[part] = child
+        cursor = child
+    if cursor.get(parts[-1]) == value:
+        return False
+    cursor[parts[-1]] = value
+    return True
+
+
+def _openclaw_agent_dir(state_dir: Path) -> Path:
+    return state_dir / "agents" / "main" / "agent"
+
+
+def _openclaw_seed_agent_dirs(state_dir: Path) -> list[Path]:
+    return [
+        state_dir / "agents" / "main" / "agent",
+        state_dir / "agents" / "dev" / "agent",
+    ]
 
 
 @dataclass
@@ -307,7 +355,6 @@ class EvalWorker:
             model=job.request.model,
             provider=job.request.provider,
             judge_model=job.request.judge_model or os.environ.get("CLAWBENCH_JUDGE_MODEL", ""),
-            judge_affects_score=job.request.judge_affects_score,
             runs_per_task=job.request.runs_per_task,
             tier=job.request.tier,
             task_ids=[task.id for task in tasks],
@@ -381,7 +428,6 @@ class EvalWorker:
                 model=job.request.model,
                 provider=job.request.provider,
                 judge_model=job.request.judge_model or os.environ.get("CLAWBENCH_JUDGE_MODEL", ""),
-                judge_affects_score=job.request.judge_affects_score,
                 runs_per_task=job.request.runs_per_task,
                 tier=job.request.tier,
                 scenario=job.request.scenario,
@@ -440,7 +486,6 @@ class EvalWorker:
             model=job.request.model,
             provider=job.request.provider,
             judge_model=job.request.judge_model or os.environ.get("CLAWBENCH_JUDGE_MODEL", ""),
-            judge_affects_score=job.request.judge_affects_score,
             runs_per_task=job.request.runs_per_task,
             task_ids=[task.id for task in lane.tasks],
             scenario=job.request.scenario,
@@ -479,7 +524,9 @@ class EvalWorker:
         effective_lanes = max(1, min(requested_parallel_lanes, len(tasks)))
         browser_tasks = [task for task in tasks if task.family.value == "browser"]
         other_tasks = [task for task in tasks if task.family.value != "browser"]
-        dedicate_browser_lane = bool(browser_tasks) and effective_lanes > 1
+        dedicate_browser_lane = (
+            _serialize_browser_lanes_enabled() and bool(browser_tasks) and effective_lanes > 1
+        )
 
         worker_lane_count = max(1, effective_lanes - (1 if dedicate_browser_lane else 0))
         lanes = [ParallelLane(index=index) for index in range(worker_lane_count)]
@@ -530,9 +577,34 @@ class EvalWorker:
         lane_home = lane.home_dir
         if lane_home is not None:
             (lane_home / ".config").mkdir(parents=True, exist_ok=True)
+            self._seed_lane_codex_home(lane_home)
         lane.log_path = lane_root / "gateway.log"
         lane.port = GATEWAY_PORT + (lane.index * GATEWAY_PORT_SPACING)
         self._seed_lane_state_dir(lane.state_dir)
+
+    def _seed_lane_codex_home(self, lane_home: Path) -> None:
+        configured_source = os.environ.get("CODEX_CONFIG_SOURCE", "").strip()
+        candidates = []
+        if configured_source:
+            candidates.append(Path(configured_source))
+        candidates.append(Path(os.environ.get("HOME", os.path.expanduser("~"))) / ".codex")
+
+        source = next((candidate for candidate in candidates if candidate.exists()), None)
+        if source is None or not source.is_dir():
+            return
+
+        target = lane_home / ".codex"
+        target.mkdir(parents=True, exist_ok=True)
+        for name in ("auth.json", "config.toml"):
+            src = source / name
+            if not src.is_file():
+                continue
+            dst = target / name
+            shutil.copy2(src, dst)
+            try:
+                dst.chmod(0o600)
+            except OSError:
+                pass
 
     def _run_lane_prepare_hook(self, lane: ParallelLane) -> None:
         hook = os.environ.get("CLAWBENCH_LANE_PREPARE_CMD", "").strip()
@@ -550,6 +622,8 @@ class EvalWorker:
             "OPENCLAW_HOME": str(lane_home),
             "OPENCLAW_STATE_DIR": str(lane.state_dir),
             "OPENCLAW_CONFIG_PATH": str(lane.state_dir / "openclaw.json"),
+            "OPENCLAW_AGENT_DIR": str(_openclaw_agent_dir(lane.state_dir)),
+            "PI_CODING_AGENT_DIR": str(_openclaw_agent_dir(lane.state_dir)),
             "XDG_CONFIG_HOME": str(lane_home / ".config"),
             "CLAWBENCH_LANE_INDEX": str(lane.index),
             "CLAWBENCH_LANE_PORT": str(lane.port),
@@ -641,18 +715,30 @@ class EvalWorker:
             return
 
         # 1. Disable chat channels so the gateway doesn't try to connect to
-        #    Telegram/Discord/Slack on startup (they thrash when 4 lanes share one token).
+        #    Telegram/Discord/Slack on startup (they thrash when lanes share one token).
+        #    WhatsApp config from older local state is rejected by newer OpenClaw schemas,
+        #    so drop it entirely from benchmark lane state.
         channels = data.get("channels")
         if isinstance(channels, dict):
+            channels.pop("whatsapp", None)
+            legacy_config = _openclaw_legacy_config_enabled()
             for channel_name in ("telegram", "discord", "slack"):
                 channel = channels.get(channel_name)
-                if isinstance(channel, dict) and channel.get("enabled") is not False:
+                if isinstance(channel, dict):
                     channel["enabled"] = False
+                    if legacy_config:
+                        channel["streaming"] = "off"
+                    else:
+                        streaming = channel.get("streaming")
+                        if isinstance(streaming, dict):
+                            streaming["mode"] = "off"
+                        else:
+                            channel["streaming"] = {"mode": "off"}
 
         # 2. Drop stale plugins that emit config warnings and slow gateway boot.
         plugins = data.get("plugins")
         if isinstance(plugins, dict):
-            stale_plugins = {"marxbiotech-git-tools"}
+            stale_plugins = {"marxbiotech-git-tools", "whatsapp"}
             allow = plugins.get("allow")
             if isinstance(allow, list):
                 plugins["allow"] = [p for p in allow if p not in stale_plugins]
@@ -679,10 +765,29 @@ class EvalWorker:
         _set_nested(data, "tools.exec.security", "full")
         _set_nested(data, "tools.exec.ask", "off")
         _set_nested(data, "approvals.exec.enabled", False)
+        if _disable_gateway_device_identity_enabled():
+            _set_nested(data, "gateway.controlUi.allowInsecureAuth", True)
+            _set_nested(data, "gateway.controlUi.dangerouslyDisableDeviceAuth", True)
+        agent_runtime = self._openclaw_agent_runtime()
+        if agent_runtime:
+            _set_nested(data, "agents.defaults.agentRuntime.id", agent_runtime)
+        else:
+            self._strip_agent_runtime_policy(data)
+            self._sanitize_non_codex_plugins(data)
         if self._active_model:
             _set_nested(data, "agents.defaults.model.primary", self._active_model)
             _set_nested(data, "agents.defaults.subagents.model.primary", self._active_model)
-            self._apply_eval_model_defaults(data, self._active_model)
+            self._ensure_openai_provider_config(data, self._active_model)
+            self._ensure_openai_codex_provider_config(data, self._active_model)
+            self._ensure_openrouter_provider_config(data, self._active_model)
+            if agent_runtime:
+                self._set_model_agent_runtime_policy(data, self._active_model, agent_runtime)
+                self._ensure_codex_openai_auth_profile(
+                    data,
+                    lane_state_dir,
+                    self._active_model,
+                    agent_runtime,
+                )
 
         tmp_path = cfg_path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -759,38 +864,39 @@ class EvalWorker:
             "OPENCLAW_SKIP_CANVAS_HOST": "1",
             "OPENCLAW_NO_RESPAWN": "1",
         }
+        gateway_env.setdefault(
+            "OPENCLAW_AGENT_DIR",
+            str(_openclaw_agent_dir(Path(gateway_env["OPENCLAW_STATE_DIR"]))),
+        )
+        gateway_env.setdefault("PI_CODING_AGENT_DIR", gateway_env["OPENCLAW_AGENT_DIR"])
         self._configure_browser_runtime(gateway_cmd, gateway_env)
         try:
             Path("/tmp/gateway.log").write_text("", encoding="utf-8")
         except Exception:
             pass
 
-        log_handle = Path("/tmp/gateway.log").open("a", encoding="utf-8")
-        try:
-            self._gateway_process = subprocess.Popen(
-                [
-                    *gateway_cmd,
-                    "gateway",
-                    "run",
-                    "--allow-unconfigured",
-                    "--dev",
-                    "--bind",
-                    "loopback",
-                    "--port",
-                    str(GATEWAY_PORT),
-                    "--auth",
-                    "token",
-                    "--token",
-                    gateway_token,
-                    "--compact",
-                ],
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-                env=gateway_env,
-                start_new_session=True,  # own process group so we can reap chromium grandchildren on shutdown
-            )
-        finally:
-            log_handle.close()
+        self._gateway_process = subprocess.Popen(
+            [
+                *gateway_cmd,
+                "gateway",
+                "run",
+                "--allow-unconfigured",
+                "--dev",
+                "--bind",
+                "loopback",
+                "--port",
+                str(GATEWAY_PORT),
+                "--auth",
+                "token",
+                "--token",
+                gateway_token,
+                "--compact",
+            ],
+            stdout=open("/tmp/gateway.log", "a", encoding="utf-8"),
+            stderr=subprocess.STDOUT,
+            env=gateway_env,
+            start_new_session=True,  # own process group so we can reap chromium grandchildren on shutdown
+        )
 
         import httpx
 
@@ -826,6 +932,17 @@ class EvalWorker:
             log_reader=lambda: self._read_gateway_log(limit=20_000),
             description="Gateway",
         )
+        # The dev gateway normalizes OpenClaw state during startup and may
+        # rewrite exec approval defaults. Reassert the eval-local approval
+        # socket before any session/control-plane work can spawn tools.
+        self._write_eval_exec_approvals(Path(gateway_env["OPENCLAW_STATE_DIR"]))
+        if self._active_model and self._openclaw_agent_runtime():
+            self._ensure_codex_openai_auth_profile(
+                {},
+                Path(gateway_env["OPENCLAW_STATE_DIR"]),
+                self._active_model,
+                self._openclaw_agent_runtime(),
+            )
 
         # Phase B: control-plane probe with retries (see the parallel
         # variant in _ensure_parallel_gateway for the detailed rationale).
@@ -892,6 +1009,8 @@ class EvalWorker:
             "OPENCLAW_HOME": str(lane_home),
             "OPENCLAW_STATE_DIR": str(lane.state_dir),
             "OPENCLAW_CONFIG_PATH": str(lane.state_dir / "openclaw.json"),
+            "OPENCLAW_AGENT_DIR": str(_openclaw_agent_dir(lane.state_dir)),
+            "PI_CODING_AGENT_DIR": str(_openclaw_agent_dir(lane.state_dir)),
             "XDG_CONFIG_HOME": str(lane_home / ".config"),
             "OPENCLAW_SKIP_GMAIL_WATCHER": "1",
             "OPENCLAW_SKIP_CANVAS_HOST": "1",
@@ -965,6 +1084,14 @@ class EvalWorker:
             log_reader=lambda: self._read_parallel_gateway_log(lane, limit=20_000),
             description=f"Lane {lane.index + 1} gateway",
         )
+        self._write_eval_exec_approvals(lane.state_dir)
+        if self._active_model and self._openclaw_agent_runtime():
+            self._ensure_codex_openai_auth_profile(
+                {},
+                lane.state_dir,
+                self._active_model,
+                self._openclaw_agent_runtime(),
+            )
 
         # Phase B: control-plane probe with explicit retries. A healthy
         # /health response does not guarantee sessions.create works
@@ -1082,6 +1209,13 @@ class EvalWorker:
             ("tools.exec.ask", "off"),
             ("approvals.exec.enabled", False),
         ]
+        if _disable_gateway_device_identity_enabled():
+            config_pairs.extend(
+                [
+                    ("gateway.controlUi.allowInsecureAuth", True),
+                    ("gateway.controlUi.dangerouslyDisableDeviceAuth", True),
+                ]
+            )
         if self._active_model:
             config_pairs.extend(
                 [
@@ -1089,14 +1223,21 @@ class EvalWorker:
                     ("agents.defaults.subagents.model.primary", self._active_model),
                 ]
             )
+        agent_runtime = self._openclaw_agent_runtime()
+        if agent_runtime:
+            config_pairs.append(("agents.defaults.agentRuntime.id", agent_runtime))
         try:
+            self._patch_openclaw_config(
+                config_pairs,
+                strip_agent_runtime=not bool(agent_runtime),
+            )
+            if self._active_model and agent_runtime:
+                self._patch_openclaw_model_runtime(self._active_model, agent_runtime)
             state_dir = Path(
                 gateway_env.get("OPENCLAW_STATE_DIR")
                 or os.environ.get("OPENCLAW_STATE_DIR")
                 or os.path.expanduser("~/.openclaw")
             )
-            config_path = Path(gateway_env.get("OPENCLAW_CONFIG_PATH") or (state_dir / "openclaw.json"))
-            self._patch_openclaw_config(config_pairs, config_path=config_path)
             self._write_eval_exec_approvals(state_dir)
         except Exception as exc:
             logger.warning("Direct openclaw.json patch failed: %s", exc)
@@ -1108,6 +1249,90 @@ class EvalWorker:
             return value
         logger.warning("Invalid OPENCLAW_EXEC_HOST=%r; using gateway", value)
         return "gateway"
+
+    @staticmethod
+    def _openclaw_agent_runtime() -> str:
+        if _openclaw_legacy_config_enabled():
+            return ""
+        return (
+            os.environ.get("CLAWBENCH_OPENCLAW_AGENT_RUNTIME")
+            or os.environ.get("OPENCLAW_AGENT_RUNTIME")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _set_model_agent_runtime_policy(
+        data: dict,
+        model_ref: str,
+        agent_runtime: str,
+    ) -> None:
+        if _openclaw_legacy_config_enabled():
+            return
+        agents = data.setdefault("agents", {})
+        if not isinstance(agents, dict):
+            return
+        defaults = agents.setdefault("defaults", {})
+        if not isinstance(defaults, dict):
+            return
+        models = defaults.get("models")
+        if not isinstance(models, dict):
+            models = {}
+        for model_cfg in models.values():
+            if isinstance(model_cfg, dict):
+                model_cfg.pop("agentRuntime", None)
+
+        if agent_runtime == "codex":
+            plugins = data.setdefault("plugins", {})
+            if isinstance(plugins, dict):
+                allow = plugins.get("allow")
+                if isinstance(allow, list) and "codex" not in allow:
+                    allow.append("codex")
+
+    @staticmethod
+    def _patch_openclaw_model_runtime(model_ref: str, agent_runtime: str) -> None:
+        if _openclaw_legacy_config_enabled():
+            return
+        state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR") or os.path.expanduser("~/.openclaw"))
+        config_path = state_dir / "openclaw.json"
+        if not config_path.exists():
+            return
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        EvalWorker._set_model_agent_runtime_policy(data, model_ref, agent_runtime)
+        tmp_path = config_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp_path.replace(config_path)
+
+    @staticmethod
+    def _strip_agent_runtime_policy(data: dict) -> bool:
+        agents = data.get("agents")
+        if not isinstance(agents, dict):
+            return False
+        defaults = agents.get("defaults")
+        if not isinstance(defaults, dict):
+            return False
+        changed = defaults.pop("agentRuntime", None) is not None
+        models = defaults.get("models")
+        if isinstance(models, dict):
+            for model_cfg in models.values():
+                if isinstance(model_cfg, dict):
+                    changed = model_cfg.pop("agentRuntime", None) is not None or changed
+        return changed
+
+    @staticmethod
+    def _sanitize_non_codex_plugins(data: dict) -> bool:
+        plugins = data.get("plugins")
+        if not isinstance(plugins, dict):
+            return False
+        changed = False
+        allow = plugins.get("allow")
+        if isinstance(allow, list) and "codex" in allow:
+            plugins["allow"] = [item for item in allow if item != "codex"]
+            changed = True
+        entries = plugins.get("entries")
+        if isinstance(entries, dict) and "codex" in entries:
+            entries.pop("codex", None)
+            changed = True
+        return changed
 
     @staticmethod
     def _write_eval_exec_approvals(state_dir: Path) -> None:
@@ -1136,20 +1361,92 @@ class EvalWorker:
         tmp_path.write_text(json.dumps(approvals, indent=2), encoding="utf-8")
         tmp_path.replace(approvals_path)
 
+    @staticmethod
+    def _ensure_codex_openai_auth_profile(
+        data: dict,
+        state_dir: Path,
+        model_ref: str,
+        agent_runtime: str,
+    ) -> bool:
+        if agent_runtime != "codex" or not model_ref.startswith("openai/"):
+            return False
+        changed = False
+        auth = data.setdefault("auth", {})
+        if not isinstance(auth, dict):
+            return False
+        profiles = auth.setdefault("profiles", {})
+        if not isinstance(profiles, dict):
+            return False
+        desired_profile = {
+            "provider": "openai-codex",
+            "mode": "api_key",
+            "displayName": "ClawBench OPENAI_API_KEY",
+        }
+        if profiles.get(CODEX_OPENAI_AUTH_PROFILE_ID) != desired_profile:
+            profiles[CODEX_OPENAI_AUTH_PROFILE_ID] = desired_profile
+            changed = True
+        order = auth.setdefault("order", {})
+        if isinstance(order, dict):
+            current_order = order.get("openai-codex")
+            if not isinstance(current_order, list):
+                current_order = []
+            next_order = [
+                CODEX_OPENAI_AUTH_PROFILE_ID,
+                *[item for item in current_order if item != CODEX_OPENAI_AUTH_PROFILE_ID],
+            ]
+            if order.get("openai-codex") != next_order:
+                order["openai-codex"] = next_order
+                changed = True
+
+        desired_credential = {
+            "type": "api_key",
+            "provider": "openai-codex",
+            "keyRef": {
+                "source": "env",
+                "provider": "default",
+                "id": "OPENAI_API_KEY",
+            },
+        }
+        for agent_dir in _openclaw_seed_agent_dirs(state_dir):
+            agent_dir.mkdir(parents=True, exist_ok=True)
+            store_path = agent_dir / "auth-profiles.json"
+            try:
+                store = json.loads(store_path.read_text(encoding="utf-8")) if store_path.exists() else {}
+            except Exception:
+                store = {}
+            if not isinstance(store, dict):
+                store = {}
+            store_profiles = store.setdefault("profiles", {})
+            if not isinstance(store_profiles, dict):
+                store_profiles = {}
+                store["profiles"] = store_profiles
+            store["version"] = int(store.get("version") or 1)
+            if store_profiles.get(CODEX_OPENAI_AUTH_PROFILE_ID) != desired_credential:
+                store_profiles[CODEX_OPENAI_AUTH_PROFILE_ID] = desired_credential
+                tmp_path = store_path.with_suffix(".json.tmp")
+                tmp_path.write_text(json.dumps(store, indent=2), encoding="utf-8")
+                tmp_path.replace(store_path)
+        return changed
+
+    @staticmethod
     def _patch_openclaw_config(
-        self,
         pairs: list[tuple[str, object]],
         *,
-        config_path: Path | None = None,
+        strip_agent_runtime: bool = False,
     ) -> None:
-        if config_path is None:
-            state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR") or os.path.expanduser("~/.openclaw"))
-            config_path = state_dir / "openclaw.json"
+        state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR") or os.path.expanduser("~/.openclaw"))
+        config_path = state_dir / "openclaw.json"
         if not config_path.exists():
             logger.warning("openclaw.json not found at %s; skipping direct patch", config_path)
             return
         data = json.loads(config_path.read_text(encoding="utf-8"))
-        changed = False
+        changed = (
+            EvalWorker._strip_agent_runtime_policy(data)
+            if strip_agent_runtime or _openclaw_legacy_config_enabled()
+            else False
+        )
+        if strip_agent_runtime or _openclaw_legacy_config_enabled():
+            changed = EvalWorker._sanitize_non_codex_plugins(data) or changed
         for key, value in pairs:
             parts = key.split(".")
             cursor = data
@@ -1160,8 +1457,23 @@ class EvalWorker:
             if cursor.get(parts[-1]) != value:
                 cursor[parts[-1]] = value
                 changed = True
-        if self._active_model:
-            changed = self._apply_eval_model_defaults(data, self._active_model) or changed
+        model_ref = ""
+        defaults = data.get("agents", {}).get("defaults", {})
+        if isinstance(defaults, dict):
+            model_cfg = defaults.get("model")
+            if isinstance(model_cfg, dict):
+                model_ref = str(model_cfg.get("primary") or "")
+        changed = EvalWorker._ensure_openai_provider_config(data, model_ref) or changed
+        changed = EvalWorker._ensure_openai_codex_provider_config(data, model_ref) or changed
+        changed = EvalWorker._ensure_openrouter_provider_config(data, model_ref) or changed
+        agent_runtime = ""
+        defaults_agent_runtime = data.get("agents", {}).get("defaults", {}).get("agentRuntime", {})
+        if isinstance(defaults_agent_runtime, dict):
+            agent_runtime = str(defaults_agent_runtime.get("id") or "")
+        changed = (
+            EvalWorker._ensure_codex_openai_auth_profile(data, state_dir, model_ref, agent_runtime)
+            or changed
+        )
         if not changed:
             return
         tmp_path = config_path.with_suffix(".json.tmp")
@@ -1169,39 +1481,204 @@ class EvalWorker:
         tmp_path.replace(config_path)
 
     @staticmethod
-    def _apply_eval_model_defaults(data: dict, model: str) -> bool:
-        """Force eval model parameters that keep benchmark turns low-latency."""
-        agents = data.setdefault("agents", {})
-        if not isinstance(agents, dict):
-            data["agents"] = agents = {}
-        defaults = agents.setdefault("defaults", {})
-        if not isinstance(defaults, dict):
-            agents["defaults"] = defaults = {}
-        models = defaults.setdefault("models", {})
-        if not isinstance(models, dict):
-            defaults["models"] = models = {}
-        entry = models.setdefault(model, {})
-        if not isinstance(entry, dict):
-            entry = {}
-            models[model] = entry
-        params = entry.setdefault("params", {})
-        if not isinstance(params, dict):
-            params = {}
-            entry["params"] = params
+    def _ensure_openai_provider_config(data: dict, model_ref: str) -> bool:
+        if not model_ref.startswith("openai/") or len(model_ref.split("/", 1)) != 2:
+            return False
+        model_id = model_ref.split("/", 1)[1]
         changed = False
-        if defaults.get("systemPromptOverride") != OPENCLAW_EVAL_SYSTEM_PROMPT:
-            defaults["systemPromptOverride"] = OPENCLAW_EVAL_SYSTEM_PROMPT
+        models_cfg = data.setdefault("models", {})
+        if not isinstance(models_cfg, dict):
+            return False
+        providers = models_cfg.setdefault("providers", {})
+        if not isinstance(providers, dict):
+            return False
+        provider_cfg = providers.get("openai")
+        if not isinstance(provider_cfg, dict):
+            provider_cfg = {}
+            providers["openai"] = provider_cfg
             changed = True
-        if params.get("fastMode") is not True:
-            params["fastMode"] = True
+        desired = {
+            "baseUrl": "https://api.openai.com/v1",
+            "api": "openai-responses",
+            "apiKey": "OPENAI_API_KEY",
+            "auth": "api-key",
+        }
+        for key, value in desired.items():
+            if provider_cfg.get(key) != value:
+                provider_cfg[key] = value
+                changed = True
+        model_entries = provider_cfg.get("models")
+        if not isinstance(model_entries, list):
+            model_entries = []
+            provider_cfg["models"] = model_entries
             changed = True
-        if model.startswith("openai/"):
-            if params.get("transport") != "sse":
-                params["transport"] = "sse"
+        desired_model = {
+            "id": model_id,
+            "name": model_id,
+            "api": "openai-responses",
+            "reasoning": True,
+            "input": ["text", "image"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 1050000,
+            "maxTokens": 128000,
+        }
+        for item in model_entries:
+            if isinstance(item, dict) and item.get("id") == model_id:
+                for key, value in desired_model.items():
+                    if item.get(key) != value:
+                        item[key] = value
+                        changed = True
+                break
+        else:
+            model_entries.append(desired_model)
+            changed = True
+        return changed
+
+    @staticmethod
+    def _ensure_openai_codex_provider_config(data: dict, model_ref: str) -> bool:
+        if model_ref.startswith("openai/"):
+            model_id = model_ref.split("/", 1)[1]
+        elif model_ref.startswith("openai-codex/"):
+            model_id = model_ref.split("/", 1)[1]
+        else:
+            return False
+        changed = False
+        models_cfg = data.setdefault("models", {})
+        if not isinstance(models_cfg, dict):
+            return False
+        providers = models_cfg.setdefault("providers", {})
+        if not isinstance(providers, dict):
+            return False
+        provider_cfg = providers.get("openai-codex")
+        if not isinstance(provider_cfg, dict):
+            provider_cfg = {}
+            providers["openai-codex"] = provider_cfg
+            changed = True
+        desired = {
+            "baseUrl": "https://api.openai.com/v1",
+            "api": "openai-responses",
+            "apiKey": "OPENAI_API_KEY",
+            "auth": "api-key",
+        }
+        for key, value in desired.items():
+            if provider_cfg.get(key) != value:
+                provider_cfg[key] = value
                 changed = True
-            if params.get("openaiWsWarmup") is not False:
-                params["openaiWsWarmup"] = False
+        model_entries = provider_cfg.get("models")
+        if not isinstance(model_entries, list):
+            model_entries = []
+            provider_cfg["models"] = model_entries
+            changed = True
+        desired_model = {
+            "id": model_id,
+            "name": model_id,
+            "api": "openai-responses",
+            "reasoning": True,
+            "input": ["text", "image"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 1050000,
+            "maxTokens": 128000,
+        }
+        for item in model_entries:
+            if isinstance(item, dict) and item.get("id") == model_id:
+                for key, value in desired_model.items():
+                    if item.get(key) != value:
+                        item[key] = value
+                        changed = True
+                break
+        else:
+            model_entries.append(desired_model)
+            changed = True
+        return changed
+
+    @staticmethod
+    def _ensure_openrouter_provider_config(data: dict, model_ref: str) -> bool:
+        if not model_ref.startswith("openrouter/") or len(model_ref.split("/", 1)) != 2:
+            return False
+        model_id = model_ref.split("/", 1)[1]
+        openrouter_timeout_seconds = int(
+            os.environ.get("CLAWBENCH_OPENROUTER_TIMEOUT_SECONDS") or "900"
+        )
+        changed = _set_nested(
+            data,
+            "agents.defaults.thinkingDefault",
+            os.environ.get("CLAWBENCH_OPENROUTER_THINKING_DEFAULT", "low").strip() or "low",
+        )
+        changed = _set_nested(
+            data,
+            "agents.defaults.timeoutSeconds",
+            int(os.environ.get("CLAWBENCH_OPENROUTER_AGENT_TIMEOUT_SECONDS") or "1200"),
+        ) or changed
+        agents_cfg = data.setdefault("agents", {})
+        if isinstance(agents_cfg, dict):
+            defaults_cfg = agents_cfg.setdefault("defaults", {})
+            if isinstance(defaults_cfg, dict):
+                model_defaults = defaults_cfg.setdefault("models", {})
+                if isinstance(model_defaults, dict):
+                    model_cfg = model_defaults.setdefault(model_ref, {})
+                    if not isinstance(model_cfg, dict):
+                        model_cfg = {}
+                        model_defaults[model_ref] = model_cfg
+                        changed = True
+                    params_cfg = model_cfg.setdefault("params", {})
+                    if not isinstance(params_cfg, dict):
+                        params_cfg = {}
+                        model_cfg["params"] = params_cfg
+                        changed = True
+                    extra_body = params_cfg.setdefault("extra_body", {})
+                    if not isinstance(extra_body, dict):
+                        extra_body = {}
+                        params_cfg["extra_body"] = extra_body
+                        changed = True
+                    desired_extra_body = {
+                        "include_reasoning": False,
+                        "reasoning": {"exclude": True},
+                    }
+                    for key, value in desired_extra_body.items():
+                        if extra_body.get(key) != value:
+                            extra_body[key] = value
+                            changed = True
+        models_cfg = data.setdefault("models", {})
+        if not isinstance(models_cfg, dict):
+            return False
+        providers = models_cfg.setdefault("providers", {})
+        if not isinstance(providers, dict):
+            return False
+        provider_cfg = providers.get("openrouter")
+        if not isinstance(provider_cfg, dict):
+            provider_cfg = {}
+            providers["openrouter"] = provider_cfg
+        desired = {
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "api": "openai-completions",
+            "apiKey": "OPENROUTER_API_KEY",
+            "timeoutSeconds": openrouter_timeout_seconds,
+        }
+        for key, value in desired.items():
+            if provider_cfg.get(key) != value:
+                provider_cfg[key] = value
                 changed = True
+        model_entries = provider_cfg.get("models")
+        if not isinstance(model_entries, list):
+            model_entries = []
+            provider_cfg["models"] = model_entries
+            changed = True
+        desired_model = {
+            "id": model_id,
+            "name": model_id,
+            "contextWindow": 131072,
+            "maxTokens": 8192,
+        }
+        for item in model_entries:
+            if isinstance(item, dict) and item.get("id") == model_id:
+                for key, value in desired_model.items():
+                    if item.get(key) != value:
+                        item[key] = value
+                        changed = True
+                break
+        else:
+            model_entries.append(desired_model)
+            changed = True
         return changed
 
     def _find_gateway_cmd(self) -> list[str] | None:
