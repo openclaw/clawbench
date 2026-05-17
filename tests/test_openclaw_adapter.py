@@ -9,6 +9,7 @@ the adapter's branches are covered end-to-end without a real gateway.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -69,11 +70,35 @@ class _StubGateway:
         self.calls.append(("create_agent", {"name": name, "workspace": workspace}))
         return "agent-stub"
 
+    async def reconnect(self) -> None:
+        self.calls.append(("reconnect", {}))
+
     async def create_session(self, *, model: str, agent_id: str, label: str) -> str:
         self.calls.append(
             ("create_session", {"model": model, "agent_id": agent_id, "label": label})
         )
         return f"session-{label}"
+
+    def set_session_auth_profile_override(
+        self,
+        session_key: str,
+        *,
+        agent_id: str,
+        auth_profile_id: str,
+        source: str = "user",
+    ) -> bool:
+        self.calls.append(
+            (
+                "set_session_auth_profile_override",
+                {
+                    "session_key": session_key,
+                    "agent_id": agent_id,
+                    "auth_profile_id": auth_profile_id,
+                    "source": source,
+                },
+            )
+        )
+        return True
 
     async def subscribe(self, session_key: str) -> None:
         self.calls.append(("subscribe", {"session_key": session_key}))
@@ -268,6 +293,40 @@ def test_run_phase_creates_session_subscribes_and_drives_simulator(tmp_path: Pat
     # The send_and_wait call should use the rendered user turn text.
     send_args = next(args for name, args in gateway.calls if name == "send_and_wait")
     assert send_args["message"] == "Do the task."
+
+
+def test_run_phase_routes_openai_codex_runtime_to_codex_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = _coding_task()
+    adapter, gateway = _make_adapter_and_gateway()
+    monkeypatch.setenv("CLAWBENCH_OPENCLAW_AGENT_RUNTIME", "codex")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(tmp_path / "state"))
+
+    async def _go() -> None:
+        async with adapter:
+            ctx = _make_ctx(task, tmp_path)
+            ctx.model = "openai/gpt-5.5"
+            await adapter.setup(ctx)
+            result = await adapter.run_phase(task.phases[0], ctx)
+            assert result.error is None
+
+    asyncio.run(_go())
+
+    create_args = next(args for name, args in gateway.calls if name == "create_session")
+    assert create_args["model"] == "openai-codex/gpt-5.5"
+    auth_args = next(
+        args for name, args in gateway.calls if name == "set_session_auth_profile_override"
+    )
+    assert auth_args["auth_profile_id"] == "openai-codex:clawbench-env"
+    auth_store = json.loads(
+        (tmp_path / "state" / "agents" / "agent-stub" / "agent" / "auth-profiles.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert auth_store["profiles"]["openai-codex:clawbench-env"]["keyRef"]["id"] == "OPENAI_API_KEY"
 
 
 def test_run_phase_fails_fast_without_setup(tmp_path: Path) -> None:

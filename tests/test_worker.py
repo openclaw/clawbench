@@ -83,18 +83,16 @@ def test_configure_browser_runtime_pins_subagents_to_active_model(monkeypatch):
 
     worker._configure_browser_runtime(["node", "/openclaw/dist/cli.js"], {"HOME": "/tmp/home"})
 
-    assert json.loads(config_path.read_text(encoding="utf-8")) == {
-        "agents": {
-            "defaults": {
-                "skipBootstrap": True,
-                "model": {"primary": "openai-codex/gpt-5.4"},
-                "subagents": {"model": {"primary": "openai-codex/gpt-5.4"}},
-            }
-        },
-        "browser": {"headless": True, "noSandbox": True},
-        "tools": {"exec": {"host": "gateway", "security": "full", "ask": "off"}},
-        "approvals": {"exec": {"enabled": False}},
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    assert data["agents"]["defaults"] == {
+        "skipBootstrap": True,
+        "model": {"primary": "openai-codex/gpt-5.4"},
+        "subagents": {"model": {"primary": "openai-codex/gpt-5.4"}},
     }
+    assert data["browser"] == {"headless": True, "noSandbox": True}
+    assert data["tools"] == {"exec": {"host": "gateway", "security": "full", "ask": "off"}}
+    assert data["approvals"] == {"exec": {"enabled": False}}
+    assert data["models"]["providers"]["openai-codex"]["auth"] == "api-key"
 
 
 def test_configure_browser_runtime_sets_requested_agent_runtime(monkeypatch):
@@ -133,7 +131,28 @@ def test_configure_browser_runtime_sets_requested_agent_runtime(monkeypatch):
     provider = data["models"]["providers"]["openai"]
     assert provider["apiKey"] == "OPENAI_API_KEY"
     assert provider["api"] == "openai-responses"
+    assert provider["auth"] == "api-key"
     assert any(item.get("id") == "gpt-5.5" for item in provider["models"])
+    codex_provider = data["models"]["providers"]["openai-codex"]
+    assert codex_provider["apiKey"] == "OPENAI_API_KEY"
+    assert codex_provider["auth"] == "api-key"
+    assert any(item.get("id") == "gpt-5.5" for item in codex_provider["models"])
+    auth_profile = data["auth"]["profiles"]["openai-codex:clawbench-env"]
+    assert auth_profile["provider"] == "openai-codex"
+    assert auth_profile["mode"] == "api_key"
+    assert data["auth"]["order"]["openai-codex"][0] == "openai-codex:clawbench-env"
+    for agent_name in ("main", "dev"):
+        store = json.loads(
+            (state_dir / "agents" / agent_name / "agent" / "auth-profiles.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        credential = store["profiles"]["openai-codex:clawbench-env"]
+        assert credential == {
+            "type": "api_key",
+            "provider": "openai-codex",
+            "keyRef": {"source": "env", "provider": "default", "id": "OPENAI_API_KEY"},
+        }
 
 
 def test_configure_browser_runtime_strips_source_agent_runtime_when_unset(monkeypatch):

@@ -11,8 +11,10 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import websockets
@@ -325,6 +327,10 @@ class GatewayClient:
             await self._ws.close()
             self._ws = None
 
+    async def reconnect(self) -> None:
+        await self.close()
+        await self.connect()
+
     async def create_session(
         self,
         *,
@@ -345,6 +351,58 @@ class GatewayClient:
         if not key:
             raise RuntimeError(f"sessions.create returned no key: {payload}")
         return key
+
+    def set_session_auth_profile_override(
+        self,
+        session_key: str,
+        *,
+        agent_id: str,
+        auth_profile_id: str,
+        source: str = "user",
+    ) -> bool:
+        """Patch the local OpenClaw session store with an auth profile override.
+
+        OpenClaw 2026.4.x does not expose auth profile selection through the
+        gateway session-create/patch RPC schema, but the Codex harness only
+        forwards a non-model auth profile when it is session-bound. The eval
+        container owns the gateway state dir, so patching the just-created
+        session entry is the least invasive compatibility path.
+        """
+        if not session_key.strip() or not auth_profile_id.strip() or not agent_id.strip():
+            return False
+        state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR") or os.path.expanduser("~/.openclaw"))
+        store_path = state_dir / "agents" / agent_id / "sessions" / "sessions.json"
+        if not store_path.exists():
+            logger.warning("session store not found at %s; cannot set auth profile override", store_path)
+            return False
+        try:
+            store = json.loads(store_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("failed to read session store %s: %s", store_path, exc)
+            return False
+        if not isinstance(store, dict):
+            return False
+        entry_key = session_key if session_key in store else next(
+            (key for key in store if isinstance(key, str) and key.lower() == session_key.lower()),
+            "",
+        )
+        if not entry_key or not isinstance(store.get(entry_key), dict):
+            logger.warning("session %s not found in %s; cannot set auth profile override", session_key, store_path)
+            return False
+        entry = store[entry_key]
+        if (
+            entry.get("authProfileOverride") == auth_profile_id
+            and entry.get("authProfileOverrideSource") == source
+        ):
+            return True
+        entry["authProfileOverride"] = auth_profile_id
+        entry["authProfileOverrideSource"] = source
+        entry.pop("authProfileOverrideCompactionCount", None)
+        entry["updatedAt"] = int(time.time() * 1000)
+        tmp_path = store_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(store, indent=2), encoding="utf-8")
+        tmp_path.replace(store_path)
+        return True
 
     async def create_agent(
         self,

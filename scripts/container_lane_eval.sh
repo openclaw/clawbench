@@ -157,6 +157,8 @@ export HOME="$FRESH_HOME"
 export OPENCLAW_HOME="$FRESH_HOME"
 export OPENCLAW_STATE_DIR="$FRESH_STATE"
 export OPENCLAW_CONFIG_PATH="$FRESH_STATE/openclaw.json"
+export OPENCLAW_AGENT_DIR="$FRESH_STATE/agents/main/agent"
+export PI_CODING_AGENT_DIR="$OPENCLAW_AGENT_DIR"
 export XDG_CONFIG_HOME="$FRESH_HOME/.config"
 SWEEP_AGENT_RUNTIME="${SWEEP_AGENT_RUNTIME:-${CLAWBENCH_OPENCLAW_AGENT_RUNTIME:-${OPENCLAW_AGENT_RUNTIME:-}}}"
 if [ -n "$SWEEP_AGENT_RUNTIME" ]; then
@@ -282,6 +284,7 @@ def ensure_legacy_openai_model(root, model_ref):
     provider_cfg.setdefault("baseUrl", "https://api.openai.com/v1")
     provider_cfg.setdefault("api", "openai-responses")
     provider_cfg.setdefault("apiKey", "OPENAI_API_KEY")
+    provider_cfg.setdefault("auth", "api-key")
     legacy_model_ids = {"openai/gpt-5.4": "gpt-5.4", "openai/gpt-5.5": "gpt-5.5"}
     model_id = legacy_model_ids.get(model_ref)
     if not model_id:
@@ -303,6 +306,92 @@ def ensure_legacy_openai_model(root, model_ref):
                 "maxTokens": 128000,
             }
         )
+
+
+def ensure_openai_codex_provider_config(root, model_ref):
+    if model_ref.startswith("openai/") and len(model_ref.split("/", 1)) == 2:
+        model_id = model_ref.split("/", 1)[1]
+    elif model_ref.startswith("openai-codex/") and len(model_ref.split("/", 1)) == 2:
+        model_id = model_ref.split("/", 1)[1]
+    else:
+        return
+    models_cfg = root.setdefault("models", {})
+    if not isinstance(models_cfg, dict):
+        return
+    providers = models_cfg.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        return
+    provider_cfg = providers.get("openai-codex")
+    if not isinstance(provider_cfg, dict):
+        provider_cfg = {}
+        providers["openai-codex"] = provider_cfg
+    provider_cfg["baseUrl"] = "https://api.openai.com/v1"
+    provider_cfg["api"] = "openai-responses"
+    provider_cfg["apiKey"] = "OPENAI_API_KEY"
+    provider_cfg["auth"] = "api-key"
+    model_entries = provider_cfg.get("models")
+    if not isinstance(model_entries, list):
+        model_entries = []
+        provider_cfg["models"] = model_entries
+    desired_model = {
+        "id": model_id,
+        "name": model_id,
+        "api": "openai-responses",
+        "reasoning": True,
+        "input": ["text", "image"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+    }
+    for item in model_entries:
+        if isinstance(item, dict) and item.get("id") == model_id:
+            item.update(desired_model)
+            break
+    else:
+        model_entries.append(desired_model)
+
+
+def ensure_codex_openai_auth_profile(root, state_dir, model_ref, agent_runtime):
+    if agent_runtime != "codex" or not model_ref.startswith("openai/"):
+        return
+    profile_id = "openai-codex:clawbench-env"
+    auth = root.setdefault("auth", {})
+    if isinstance(auth, dict):
+        profiles = auth.setdefault("profiles", {})
+        if isinstance(profiles, dict):
+            profiles[profile_id] = {
+                "provider": "openai-codex",
+                "mode": "api_key",
+                "displayName": "ClawBench OPENAI_API_KEY",
+            }
+        order = auth.setdefault("order", {})
+        if isinstance(order, dict):
+            current = order.get("openai-codex")
+            if not isinstance(current, list):
+                current = []
+            order["openai-codex"] = [profile_id, *[item for item in current if item != profile_id]]
+
+    for agent_name in ("main", "dev"):
+        agent_dir = Path(state_dir) / "agents" / agent_name / "agent"
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        store_path = agent_dir / "auth-profiles.json"
+        try:
+            store = json.loads(store_path.read_text(encoding="utf-8")) if store_path.exists() else {}
+        except Exception:
+            store = {}
+        if not isinstance(store, dict):
+            store = {}
+        store["version"] = int(store.get("version") or 1)
+        store_profiles = store.setdefault("profiles", {})
+        if not isinstance(store_profiles, dict):
+            store_profiles = {}
+            store["profiles"] = store_profiles
+        store_profiles[profile_id] = {
+            "type": "api_key",
+            "provider": "openai-codex",
+            "keyRef": {"source": "env", "provider": "default", "id": "OPENAI_API_KEY"},
+        }
+        store_path.write_text(json.dumps(store, indent=2) + "\n", encoding="utf-8")
 
 
 def sanitize_legacy_plugins(root, model_ref):
@@ -391,6 +480,7 @@ set_nested(data, "tools.exec.ask", "off")
 set_nested(data, "approvals.exec.enabled", False)
 model_ref = os.environ["SWEEP_MODEL"].strip()
 ensure_legacy_openai_model(data, model_ref)
+ensure_openai_codex_provider_config(data, model_ref)
 agent_runtime = os.environ.get("SWEEP_AGENT_RUNTIME", "").strip()
 legacy_config = os.environ.get("CLAWBENCH_OPENCLAW_LEGACY_CONFIG", "").strip().lower() in {
     "1",
@@ -401,6 +491,7 @@ legacy_config = os.environ.get("CLAWBENCH_OPENCLAW_LEGACY_CONFIG", "").strip().l
 if agent_runtime and not legacy_config:
     set_nested(data, "agents.defaults.agentRuntime.id", agent_runtime)
     set_model_agent_runtime_policy(data, model_ref, agent_runtime)
+    ensure_codex_openai_auth_profile(data, os.environ["OPENCLAW_STATE_DIR"], model_ref, agent_runtime)
 elif legacy_config:
     strip_agent_runtime_policy(data)
     sanitize_legacy_plugins(data, model_ref)

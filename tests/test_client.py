@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 from websockets.datastructures import Headers
@@ -18,6 +20,30 @@ def test_gateway_config_defaults():
     # spurious empty_response failures.
     assert cfg.connect_timeout == 30.0
     assert cfg.request_timeout == 60.0
+
+
+def test_set_session_auth_profile_override_patches_local_store(tmp_path: Path, monkeypatch):
+    state_dir = tmp_path / "state"
+    store_dir = state_dir / "agents" / "agent-stub" / "sessions"
+    store_dir.mkdir(parents=True)
+    store_path = store_dir / "sessions.json"
+    store_path.write_text(
+        json.dumps({"session-1": {"sessionId": "session-1"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+
+    ok = GatewayClient().set_session_auth_profile_override(
+        "session-1",
+        agent_id="agent-stub",
+        auth_profile_id="openai-codex:clawbench-env",
+    )
+
+    assert ok is True
+    entry = json.loads(store_path.read_text(encoding="utf-8"))["session-1"]
+    assert entry["authProfileOverride"] == "openai-codex:clawbench-env"
+    assert entry["authProfileOverrideSource"] == "user"
+    assert "authProfileOverrideCompactionCount" not in entry
 
 
 def test_gateway_config_env_overrides(monkeypatch):
