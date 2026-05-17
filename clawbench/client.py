@@ -1,4 +1,4 @@
-"""Gateway client using WebSocket protocol v3."""
+"""Gateway client using OpenClaw's WebSocket protocol."""
 
 from __future__ import annotations
 
@@ -11,8 +11,10 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import websockets
@@ -20,11 +22,12 @@ from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import InvalidMessage, InvalidStatus
 
 from clawbench import __version__
-from clawbench.schemas import TokenUsage, ToolCall, Transcript, TranscriptMessage
+from clawbench.schemas import TokenUsage, ToolCall, ToolResult, Transcript, TranscriptMessage
 
 logger = logging.getLogger(__name__)
 
-PROTOCOL_VERSION = 3
+MIN_PROTOCOL_VERSION = 3
+MAX_PROTOCOL_VERSION = 4
 DEVICE_IDENTITY_HELPER_JS = r"""
 const crypto = require("crypto");
 const fs = require("fs");
@@ -232,6 +235,14 @@ class GatewayClient:
                     max_size=10 * 1024 * 1024,
                     open_timeout=attempt_timeout,
                     additional_headers={"Origin": host},
+                    # The benchmark uses loopback gateway sockets and can issue
+                    # long-lived RPCs (notably agent.wait while a provider call
+                    # is in flight). Python websockets' default keepalive can
+                    # close the connection before the gateway surfaces the
+                    # actual model/provider result, contaminating runs as infra
+                    # timeouts. The gateway already owns run-level timeouts.
+                    ping_interval=None,
+                    ping_timeout=None,
                 )
                 self._listen_task = asyncio.create_task(self._listener())
                 challenge = await self._wait_event(
@@ -259,8 +270,8 @@ class GatewayClient:
                     "mode": "ui",
                 }
                 connect_params: dict[str, Any] = {
-                    "minProtocol": PROTOCOL_VERSION,
-                    "maxProtocol": PROTOCOL_VERSION,
+                    "minProtocol": MIN_PROTOCOL_VERSION,
+                    "maxProtocol": MAX_PROTOCOL_VERSION,
                     "client": client_info,
                     "role": role,
                     "scopes": scopes,
@@ -316,6 +327,10 @@ class GatewayClient:
             await self._ws.close()
             self._ws = None
 
+    async def reconnect(self) -> None:
+        await self.close()
+        await self.connect()
+
     async def create_session(
         self,
         *,
@@ -336,6 +351,58 @@ class GatewayClient:
         if not key:
             raise RuntimeError(f"sessions.create returned no key: {payload}")
         return key
+
+    def set_session_auth_profile_override(
+        self,
+        session_key: str,
+        *,
+        agent_id: str,
+        auth_profile_id: str,
+        source: str = "user",
+    ) -> bool:
+        """Patch the local OpenClaw session store with an auth profile override.
+
+        OpenClaw 2026.4.x does not expose auth profile selection through the
+        gateway session-create/patch RPC schema, but the Codex harness only
+        forwards a non-model auth profile when it is session-bound. The eval
+        container owns the gateway state dir, so patching the just-created
+        session entry is the least invasive compatibility path.
+        """
+        if not session_key.strip() or not auth_profile_id.strip() or not agent_id.strip():
+            return False
+        state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR") or os.path.expanduser("~/.openclaw"))
+        store_path = state_dir / "agents" / agent_id / "sessions" / "sessions.json"
+        if not store_path.exists():
+            logger.warning("session store not found at %s; cannot set auth profile override", store_path)
+            return False
+        try:
+            store = json.loads(store_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("failed to read session store %s: %s", store_path, exc)
+            return False
+        if not isinstance(store, dict):
+            return False
+        entry_key = session_key if session_key in store else next(
+            (key for key in store if isinstance(key, str) and key.lower() == session_key.lower()),
+            "",
+        )
+        if not entry_key or not isinstance(store.get(entry_key), dict):
+            logger.warning("session %s not found in %s; cannot set auth profile override", session_key, store_path)
+            return False
+        entry = store[entry_key]
+        if (
+            entry.get("authProfileOverride") == auth_profile_id
+            and entry.get("authProfileOverrideSource") == source
+        ):
+            return True
+        entry["authProfileOverride"] = auth_profile_id
+        entry["authProfileOverrideSource"] = source
+        entry.pop("authProfileOverrideCompactionCount", None)
+        entry["updatedAt"] = int(time.time() * 1000)
+        tmp_path = store_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(store, indent=2), encoding="utf-8")
+        tmp_path.replace(store_path)
+        return True
 
     async def create_agent(
         self,
@@ -578,17 +645,14 @@ class GatewayClient:
         effective_timeout = timeout if timeout is not None else self.config.request_timeout
         future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
+        await self._ws.send(json.dumps(frame))
         try:
-            await self._ws.send(json.dumps(frame))
             response = await asyncio.wait_for(future, timeout=effective_timeout)
         except asyncio.TimeoutError:
             self._pending.pop(request_id, None)
             raise TimeoutError(
                 f"RPC {method} timed out after {effective_timeout:.1f}s"
             )
-        except Exception:
-            self._pending.pop(request_id, None)
-            raise
 
         if not response.get("ok", False):
             error = response.get("error", {})
@@ -757,6 +821,7 @@ def _parse_single_message(message_data: dict[str, Any]) -> TranscriptMessage | N
 
     text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
+    tool_results: list[ToolResult] = []
     tool_result_for: str | None = None
     tool_result_content = ""
     usage = _parse_usage_payload(message_data.get("usage", {}))
@@ -775,31 +840,97 @@ def _parse_single_message(message_data: dict[str, Any]) -> TranscriptMessage | N
             if block_type == "output_text":
                 text_parts.append(block.get("text", ""))
                 continue
-            if block_type in {"tool_use", "toolCall"}:
-                arguments = block.get("input", block.get("arguments", {}))
+            normalized_block_type = block_type.replace("-", "_").lower()
+            if normalized_block_type in {
+                "function_call",
+                "functioncall",
+                "tool_call",
+                "toolcall",
+                "tool_search_call",
+                "toolsearchcall",
+                "tool_use",
+                "tooluse",
+            }:
+                arguments = block.get(
+                    "input",
+                    block.get(
+                        "arguments",
+                        block.get("args", block.get("parameters", {})),
+                    ),
+                )
                 if isinstance(arguments, str):
                     try:
                         arguments = json.loads(arguments)
                     except json.JSONDecodeError:
                         arguments = {"raw": arguments}
+                raw_name = (
+                    block.get("name")
+                    or block.get("tool")
+                    or block.get("function")
+                    or block.get("title")
+                    or block_type
+                )
                 tool_calls.append(
                     ToolCall(
-                        id=block.get("id", ""),
-                        name=block.get("name", ""),
+                        id=(
+                            block.get("id")
+                            or block.get("call_id")
+                            or block.get("callId")
+                            or block.get("toolCallId")
+                            or block.get("tool_call_id")
+                            or ""
+                        ),
+                        name=raw_name if isinstance(raw_name, str) else block_type,
                         input=arguments if isinstance(arguments, dict) else {},
                     )
                 )
                 continue
-            if block_type in {"tool_result", "toolResult"}:
+            if normalized_block_type in {
+                "function_call_output",
+                "functioncalloutput",
+                "tool_call_output",
+                "toolcalloutput",
+                "tool_output",
+                "tool_result",
+                "tool_search_output",
+                "toolsearchoutput",
+                "toolresult",
+            }:
                 tool_result_for = (
                     block.get("tool_use_id")
+                    or block.get("toolUseId")
                     or block.get("toolCallId")
                     or block.get("tool_call_id")
+                    or block.get("call_id")
+                    or block.get("callId")
                     or block.get("id")
                 )
-                tool_result_content = _flatten_tool_content(block.get("content", ""))
+                tool_result_content = _flatten_tool_content(
+                    block.get("content", block.get("output", block.get("text", "")))
+                )
+                if tool_result_for:
+                    tool_results.append(
+                        ToolResult(id=str(tool_result_for), content=tool_result_content)
+                    )
                 if tool_result_content:
                     text_parts.append(tool_result_content)
+
+    if role.lower().replace("_", "") in {"tool", "toolresult"}:
+        tool_result_for = (
+            tool_result_for
+            or message_data.get("toolCallId")
+            or message_data.get("tool_call_id")
+            or message_data.get("toolUseId")
+            or message_data.get("tool_use_id")
+            or message_data.get("call_id")
+            or message_data.get("callId")
+        )
+        if not tool_result_content:
+            tool_result_content = "\n".join(part for part in text_parts if part)
+        if tool_result_for and not tool_results:
+            tool_results.append(
+                ToolResult(id=str(tool_result_for), content=tool_result_content)
+            )
 
     # Some providers surface assistant failures in a dedicated error field
     # with empty content blocks. Preserve that signal in transcript text.
@@ -818,6 +949,7 @@ def _parse_single_message(message_data: dict[str, Any]) -> TranscriptMessage | N
         role=role,
         text="\n".join(part for part in text_parts if part),
         tool_calls=tool_calls,
+        tool_results=tool_results,
         tool_result_for=tool_result_for,
         tool_result_content=tool_result_content,
         usage=usage,
@@ -942,13 +1074,27 @@ def _correlate_transcript(transcript: Transcript) -> Transcript:
         for tool_call in message.tool_calls:
             if tool_call.id:
                 by_id[tool_call.id] = tool_call
-        if message.tool_result_for and message.tool_result_for in by_id:
-            tool_call = by_id[message.tool_result_for]
-            if message.tool_result_content:
+        result_pairs = list(message.tool_results)
+        if message.tool_result_for and not any(
+            result.id == message.tool_result_for
+            and result.content == message.tool_result_content
+            for result in result_pairs
+        ):
+            result_pairs.append(
+                ToolResult(
+                    id=message.tool_result_for,
+                    content=message.tool_result_content,
+                )
+            )
+        for result in result_pairs:
+            if result.id not in by_id:
+                continue
+            tool_call = by_id[result.id]
+            if result.content:
                 if tool_call.output:
-                    tool_call.output = f"{tool_call.output}\n{message.tool_result_content}".strip()
+                    tool_call.output = f"{tool_call.output}\n{result.content}".strip()
                 else:
-                    tool_call.output = message.tool_result_content
+                    tool_call.output = result.content
             if tool_call.success is None:
                 tool_call.success = not _looks_like_error(tool_call.output)
             if tool_call.success is False and not tool_call.error:

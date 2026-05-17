@@ -8,17 +8,19 @@ simulated-user turns, and resolves `StateQuery` assertions against the
 gateway's `memory.search` / `sessions.resolve` / `cron.list` / arbitrary
 `_rpc(method)` surface.
 
-The legacy harness still owns the executable CLI path for now; this
-adapter is the canonical wrapper used by adapter-level tests and later
-harness wiring.
+The benchmark harness now routes OpenClaw through this adapter, matching
+the same canonical task/run lifecycle used by other harness adapters.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from clawbench.adapters import register_adapter
 from clawbench.adapters.base import (
@@ -35,17 +37,22 @@ from clawbench.canonical import (
 )
 from clawbench.client import GatewayClient, GatewayConfig
 from clawbench.environment_files import (
+    memory_visible_in_transcript,
     resolve_json_path,
     verify_memory_fallback,
 )
 from clawbench.schemas import (
+    CronState,
     MemoryState,
     PromptVariant,
+    SessionState,
+    Transcript,
 )
 from clawbench.session_labels import unique_session_label
 from clawbench.simulated_user import UserSimulator
 
 logger = logging.getLogger(__name__)
+CODEX_OPENAI_AUTH_PROFILE_ID = "openai-codex:clawbench-env"
 
 
 @dataclass
@@ -130,6 +137,11 @@ class OpenClawAdapter(AgentAdapter):
         agent_id = await self.client.create_agent(
             name=agent_name, workspace=str(ctx.workspace)
         )
+        _ensure_codex_openai_agent_auth_profile(ctx.model, agent_id)
+        # OpenClaw 2026.4.x persists agent changes through the gateway config
+        # and may restart immediately after agents.create. Reconnect before
+        # creating sessions so subsequent phase traffic is on the fresh socket.
+        await self.client.reconnect()
         ctx.adapter_state["agent_id"] = agent_id
         ctx.adapter_state.setdefault("session_keys", [])
 
@@ -191,13 +203,20 @@ class OpenClawAdapter(AgentAdapter):
             )
 
         session_keys: list[str] = ctx.adapter_state.setdefault("session_keys", [])
+        session_model = _openclaw_session_model(ctx.model)
         session_key = await self.client.create_session(
-            model=ctx.model,
+            model=session_model,
             agent_id=agent_id,
             label=unique_session_label(
                 f"clawbench-{ctx.task.id}-run{ctx.run_index}-phase{phase.name}"
             ),
         )
+        if _should_bind_codex_openai_auth_profile(ctx.model):
+            self.client.set_session_auth_profile_override(
+                session_key,
+                agent_id=agent_id,
+                auth_profile_id=CODEX_OPENAI_AUTH_PROFILE_ID,
+            )
         session_keys.append(session_key)
         ctx.adapter_state["last_session_key"] = session_key
 
@@ -465,3 +484,57 @@ class OpenClawAdapter(AgentAdapter):
 
 
 __all__ = ["OpenClawAdapter", "OpenClawAdapterConfig"]
+
+
+def _should_bind_codex_openai_auth_profile(model: str) -> bool:
+    runtime = (
+        os.environ.get("CLAWBENCH_OPENCLAW_AGENT_RUNTIME")
+        or os.environ.get("OPENCLAW_AGENT_RUNTIME")
+        or ""
+    ).strip()
+    if runtime != "codex":
+        return False
+    if not model.startswith("openai/"):
+        return False
+    return bool(os.environ.get("OPENAI_API_KEY", "").strip())
+
+
+def _openclaw_session_model(model: str) -> str:
+    if not _should_bind_codex_openai_auth_profile(model):
+        return model
+    return f"openai-codex/{model.split('/', 1)[1]}"
+
+
+def _ensure_codex_openai_agent_auth_profile(model: str, agent_id: str) -> None:
+    if not _should_bind_codex_openai_auth_profile(model):
+        return
+    state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR") or os.path.expanduser("~/.openclaw"))
+    agent_dir = state_dir / "agents" / agent_id / "agent"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    store_path = agent_dir / "auth-profiles.json"
+    try:
+        store = json.loads(store_path.read_text(encoding="utf-8")) if store_path.exists() else {}
+    except Exception:
+        store = {}
+    if not isinstance(store, dict):
+        store = {}
+    store["version"] = int(store.get("version") or 1)
+    profiles = store.setdefault("profiles", {})
+    if not isinstance(profiles, dict):
+        profiles = {}
+        store["profiles"] = profiles
+    credential = {
+        "type": "api_key",
+        "provider": "openai-codex",
+        "keyRef": {"source": "env", "provider": "default", "id": "OPENAI_API_KEY"},
+    }
+    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if openai_key:
+        # OpenClaw 2026.4.x expects the concrete key in auth-profiles.json;
+        # newer runtimes can resolve keyRef. The file lives in ephemeral eval
+        # state, never in the repository.
+        credential["key"] = openai_key
+    profiles[CODEX_OPENAI_AUTH_PROFILE_ID] = credential
+    tmp_path = store_path.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(store, indent=2) + "\n", encoding="utf-8")
+    tmp_path.replace(store_path)
