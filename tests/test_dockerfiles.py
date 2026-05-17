@@ -27,3 +27,4 @@ def test_container_eval_scripts_do_not_write_codex_plugin_config():
 
         assert "codex.setdefault(\"config\"" not in contents
         assert "config[\"codexDynamicToolsLoading\"]" not in contents
+        assert "model_cfg[\"agentRuntime\"]" not in contents

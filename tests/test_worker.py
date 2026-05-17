@@ -130,6 +130,10 @@ def test_configure_browser_runtime_sets_requested_agent_runtime(monkeypatch):
     assert data["agents"]["defaults"]["agentRuntime"]["id"] == "codex"
     models = data["agents"]["defaults"].get("models", {})
     assert "agentRuntime" not in models.get("openai/gpt-5.5", {})
+    provider = data["models"]["providers"]["openai"]
+    assert provider["apiKey"] == "OPENAI_API_KEY"
+    assert provider["api"] == "openai-responses"
+    assert any(item.get("id") == "gpt-5.5" for item in provider["models"])
 
 
 def test_configure_browser_runtime_strips_source_agent_runtime_when_unset(monkeypatch):

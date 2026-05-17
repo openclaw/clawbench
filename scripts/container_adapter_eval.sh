@@ -307,6 +307,45 @@ def strip_agent_runtime_policy(root):
                 model_cfg.pop("agentRuntime", None)
 
 
+def ensure_openai_provider_config(root, model_ref):
+    if not model_ref.startswith("openai/") or len(model_ref.split("/", 1)) != 2:
+        return
+    model_id = model_ref.split("/", 1)[1]
+    models_cfg = root.setdefault("models", {})
+    if not isinstance(models_cfg, dict):
+        return
+    providers = models_cfg.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        return
+    provider_cfg = providers.get("openai")
+    if not isinstance(provider_cfg, dict):
+        provider_cfg = {}
+        providers["openai"] = provider_cfg
+    provider_cfg["baseUrl"] = "https://api.openai.com/v1"
+    provider_cfg["api"] = "openai-responses"
+    provider_cfg["apiKey"] = "OPENAI_API_KEY"
+    model_entries = provider_cfg.get("models")
+    if not isinstance(model_entries, list):
+        model_entries = []
+        provider_cfg["models"] = model_entries
+    desired_model = {
+        "id": model_id,
+        "name": model_id,
+        "api": "openai-responses",
+        "reasoning": True,
+        "input": ["text", "image"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+    }
+    for item in model_entries:
+        if isinstance(item, dict) and item.get("id") == model_id:
+            item.update(desired_model)
+            break
+    else:
+        model_entries.append(desired_model)
+
+
 def ensure_codex_plugin_allowed(root, loading):
     if loading not in {"searchable", "direct"}:
         raise SystemExit(f"invalid CLAWBENCH_CODEX_DYNAMIC_TOOLS_LOADING={loading!r}")
@@ -353,6 +392,7 @@ model = os.environ.get("SWEEP_MODEL", "").strip()
 if model:
     set_nested(data, "agents.defaults.model.primary", model)
     set_nested(data, "agents.defaults.subagents.model.primary", model)
+    ensure_openai_provider_config(data, model)
 agent_runtime = os.environ.get("SWEEP_AGENT_RUNTIME", "").strip()
 legacy_config = os.environ.get("CLAWBENCH_OPENCLAW_LEGACY_CONFIG", "").strip().lower() in {
     "1",

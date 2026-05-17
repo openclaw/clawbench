@@ -234,14 +234,11 @@ def set_model_agent_runtime_policy(root, model_ref, agent_runtime):
     defaults = agents.setdefault("defaults", {})
     if not isinstance(defaults, dict):
         return
-    models = defaults.setdefault("models", {})
-    if not isinstance(models, dict):
-        return
-    model_cfg = models.setdefault(model_ref, {})
-    if not isinstance(model_cfg, dict):
-        model_cfg = {}
-        models[model_ref] = model_cfg
-    model_cfg["agentRuntime"] = {"id": agent_runtime}
+    models = defaults.get("models")
+    if isinstance(models, dict):
+        for model_cfg in models.values():
+            if isinstance(model_cfg, dict):
+                model_cfg.pop("agentRuntime", None)
 
     if agent_runtime == "codex":
         plugins_cfg = root.setdefault("plugins", {})
@@ -393,6 +390,7 @@ set_nested(data, "tools.exec.security", "full")
 set_nested(data, "tools.exec.ask", "off")
 set_nested(data, "approvals.exec.enabled", False)
 model_ref = os.environ["SWEEP_MODEL"].strip()
+ensure_legacy_openai_model(data, model_ref)
 agent_runtime = os.environ.get("SWEEP_AGENT_RUNTIME", "").strip()
 legacy_config = os.environ.get("CLAWBENCH_OPENCLAW_LEGACY_CONFIG", "").strip().lower() in {
     "1",
@@ -405,7 +403,6 @@ if agent_runtime and not legacy_config:
     set_model_agent_runtime_policy(data, model_ref, agent_runtime)
 elif legacy_config:
     strip_agent_runtime_policy(data)
-    ensure_legacy_openai_model(data, model_ref)
     sanitize_legacy_plugins(data, model_ref)
 else:
     strip_agent_runtime_policy(data)

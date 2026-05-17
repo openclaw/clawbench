@@ -1352,12 +1352,66 @@ class EvalWorker:
             model_cfg = defaults.get("model")
             if isinstance(model_cfg, dict):
                 model_ref = str(model_cfg.get("primary") or "")
+        changed = EvalWorker._ensure_openai_provider_config(data, model_ref) or changed
         changed = EvalWorker._ensure_openrouter_provider_config(data, model_ref) or changed
         if not changed:
             return
         tmp_path = config_path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         tmp_path.replace(config_path)
+
+    @staticmethod
+    def _ensure_openai_provider_config(data: dict, model_ref: str) -> bool:
+        if not model_ref.startswith("openai/") or len(model_ref.split("/", 1)) != 2:
+            return False
+        model_id = model_ref.split("/", 1)[1]
+        changed = False
+        models_cfg = data.setdefault("models", {})
+        if not isinstance(models_cfg, dict):
+            return False
+        providers = models_cfg.setdefault("providers", {})
+        if not isinstance(providers, dict):
+            return False
+        provider_cfg = providers.get("openai")
+        if not isinstance(provider_cfg, dict):
+            provider_cfg = {}
+            providers["openai"] = provider_cfg
+            changed = True
+        desired = {
+            "baseUrl": "https://api.openai.com/v1",
+            "api": "openai-responses",
+            "apiKey": "OPENAI_API_KEY",
+        }
+        for key, value in desired.items():
+            if provider_cfg.get(key) != value:
+                provider_cfg[key] = value
+                changed = True
+        model_entries = provider_cfg.get("models")
+        if not isinstance(model_entries, list):
+            model_entries = []
+            provider_cfg["models"] = model_entries
+            changed = True
+        desired_model = {
+            "id": model_id,
+            "name": model_id,
+            "api": "openai-responses",
+            "reasoning": True,
+            "input": ["text", "image"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 1050000,
+            "maxTokens": 128000,
+        }
+        for item in model_entries:
+            if isinstance(item, dict) and item.get("id") == model_id:
+                for key, value in desired_model.items():
+                    if item.get(key) != value:
+                        item[key] = value
+                        changed = True
+                break
+        else:
+            model_entries.append(desired_model)
+            changed = True
+        return changed
 
     @staticmethod
     def _ensure_openrouter_provider_config(data: dict, model_ref: str) -> bool:
