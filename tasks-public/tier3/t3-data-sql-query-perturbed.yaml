@@ -1,0 +1,565 @@
+id: t3-data-sql-query-perturbed
+name: 'Tier 3: SQL From Natural Language (Perturbed)'
+tier: tier3
+family: tools
+surface: tools
+pool: public_dev
+subsets:
+- hard
+capabilities:
+- structured_output
+timeout_seconds: 720
+setup:
+  asset_packs:
+  - t3_data_sql_query
+user:
+  max_turns: 2
+  turns:
+  - message: "Thinking...\nThinking Process:\n\n1.  **Analyze the Request:**\n   \
+      \ *   Task: Paraphrase the provided instruction.\n    *   Constraint 1: Keep\
+      \ the exact same semantic meaning and intent.\n    *   Constraint 2: Change\
+      \ the wording slightly.\n    *   Constraint 3: Output ONLY the paraphrased text\
+      \ (no introductions, n\e[1D\e[K\nno explanations, no markdown blocks unless\
+      \ part of the text itself).\n    *   Original Text: \"users.db has all our signup\
+      \ data. Can you tell me h\e[1D\e[K\nhow many active users from Europe signed\
+      \ up in 2026 and which acquisition c\e[1D\e[K\nchannels brought them in? Output\
+      \ a CSV.\"\n\n2.  **Analyze the Original Text:**\n    *   Context: `users.db`\
+      \ contains signup data.\n    *   Query Goal 1: Count active users from Europe\
+      \ who signed up in 2026.\e[5D\e[K\n2026.\n    *   Query Goal 2: Identify the\
+      \ acquisition channels for these user\e[4D\e[K\nusers.\n    *   Output Format:\
+      \ CSV.\n\n3.  **Drafting Paraphrases:**\n    *   *Draft 1:* The database users.db\
+      \ holds our registration information\e[11D\e[K\ninformation. Please report the\
+      \ number of active European users registering \e[K\nin 2026 along with their\
+      \ source channels. Format the result as a CSV.\n    *   *Draft 2:* All signup\
+      \ records are stored in users.db. I need to kno\e[3D\e[K\nknow the count of\
+      \ active signups from Europe in 2026 and their acquisition \e[K\nsources. Provide\
+      \ the output in CSV format.\n    *   *Draft 3:* Since users.db contains all\
+      \ signup information, could yo\e[2D\e[K\nyou determine the number of active\
+      \ European users who registered during 202\e[3D\e[K\n2026 and the channels that\
+      \ acquired them? Please output the results as a CS\e[2D\e[K\nCSV file.\n\n4.\
+      \  **Selecting the Best Option:**\n    *   Draft 2 is concise and maintains\
+      \ the meaning well.\n    *   Let's refine it to ensure it sounds natural but\
+      \ different enough.\n    *   \"The users.db file contains all signup records.\
+      \ Please provide the \e[K\ncount of active users from Europe who registered\
+      \ in 2026, along with their \e[K\nacquisition channels, formatted as a CSV.\"\
+      \n\n5.  **Final Check against Constraints:**\n    *   Semantic meaning preserved?\
+      \ Yes (db name, active users, Europe, 202\e[3D\e[K\n2026, channels, CSV output).\n\
+      \    *   Wording changed? Yes.\n    *   Only paraphrased text? Yes.\n\n6.  **Final\
+      \ Polish:**\n    \"The users.db database stores all our registration information.\
+      \ Please \e[K\ndetermine the number of active European users who signed up in\
+      \ 2026 and ide\e[3D\e[K\nidentify their acquisition channels. Format the output\
+      \ as a CSV.\"\n\n    Let's try one more to make it flow better.\n    \"All registration\
+      \ data is located in users.db. Could you calculate the \e[K\nnumber of active\
+      \ users from Europe who registered in 2026 and list their ac\e[2D\e[K\nacquisition\
+      \ sources? Return the result as a CSV.\"\n\n    Let's go with a version that\
+      \ closely mirrors the structure but swaps vo\e[2D\e[K\nvocabulary.\n    \"The\
+      \ users.db file holds all our registration records. Please provide t\e[1D\e\
+      [K\nthe count of active European users who signed up in 2026 along with their\
+      \ a\e[1D\e[K\nacquisition channels. Ensure the output is in CSV format.\"\n\n\
+      \    Wait, I need to make sure I don't add extra instructions like \"Ensure\"\
+      .\e[9D\e[K\n\"Ensure\". Just state the requirement.\n\n    \"users.db contains\
+      \ our complete signup records. Please indicate the num\e[3D\e[K\nnumber of active\
+      \ users from Europe who registered in 2026 and specify their\e[5D\e[K\ntheir\
+      \ acquisition channels. Deliver the results as a CSV.\"\n\n    This looks good.\n\
+      \n7.  **Final Verification:**\n    *   Original: \"users.db has all our signup\
+      \ data.\" -> Paraphrase: \"users\e[6D\e[K\n\"users.db contains our complete\
+      \ signup records.\"\n    *   Original: \"Can you tell me how many active users\
+      \ from Europe signed\e[6D\e[K\nsigned up in 2026...\" -> Paraphrase: \"Please\
+      \ indicate the number of active \e[K\nusers from Europe who registered in 2026...\"\
+      \n    *   Original: \"...and which acquisition channels brought them in?\" ->\
+      \ P\e[1D\e[K\nParaphrase: \"...and specify their acquisition channels.\"\n \
+      \   *   Original: \"Output a CSV.\" -> Paraphrase: \"Deliver the results as\
+      \ a \e[K\nCSV.\"\n\n    Looks consistent.\n\n    Let's try to be slightly more\
+      \ direct.\n    \"The users.db database holds all signup information. Please\
+      \ report the \e[K\ncount of active European users who registered in 2026 and\
+      \ their acquisition\e[11D\e[K\nacquisition sources. Format the output as a CSV.\"\
+      \n\n    This is clear and meets all criteria.\n\n    One more check: \"Output\
+      \ ONLY the paraphrased text, nothing else.\"\n    I must not include markdown\
+      \ code blocks like ```text ... ``` unless the\e[3D\e[K\nthe text itself requires\
+      \ it (it doesn't). I should just output the raw stri\e[4D\e[K\nstring.\n\n \
+      \   Refined selection:\n    \"The users.db database stores all our registration\
+      \ data. Please report \e[K\nthe count of active European users who signed up\
+      \ in 2026 along with their a\e[1D\e[K\nacquisition channels. Provide the output\
+      \ as a CSV.\"\n\n    Actually, \"stores all our registration data\" is good.\
+      \ \"signed up\" vs \"r\e[2D\e[K\n\"registered\". \"Output a CSV\" vs \"Provide\
+      \ the output as a CSV\".\n\n    Let's finalize:\n    \"users.db contains all\
+      \ our registration records. Please specify the num\e[3D\e[K\nnumber of active\
+      \ users from Europe who registered in 2026 and the acquisiti\e[9D\e[K\nacquisition\
+      \ channels used. Format the output as a CSV.\"\n\n    Wait, \"Format the output\
+      \ as a CSV\" might imply transforming something e\e[1D\e[K\nelse. \"Output a\
+      \ CSV\" means the result should be a CSV.\n    \"Return the results in CSV format.\"\
+      \n\n    Final Version:\n    \"users.db contains all our registration records.\
+      \ Please specify the num\e[3D\e[K\nnumber of active users from Europe who registered\
+      \ in 2026 and the acquisiti\e[9D\e[K\nacquisition channels used. Return the\
+      \ results in CSV format.\"\n\n    Wait, I should check if \"users.db\" should\
+      \ stay exactly as is. Yes, prop\e[4D\e[K\nproper nouns/filenames usually stay.\n\
+      \    Let's make it flow a bit more like the original but different words.\n\n\
+      \    \"Our signup data is stored in users.db. Could you calculate the total\
+      \ a\e[1D\e[K\nactive users from Europe who joined in 2026 and identify their\
+      \ acquisition \e[K\nchannels? Generate a CSV for the output.\"\n\n    Let's\
+      \ go with:\n    \"The users.db database holds all our registration information.\
+      \ Please p\e[1D\e[K\nprovide the count of active European users who signed up\
+      \ in 2026 along with\e[4D\e[K\nwith their acquisition channels. Format the result\
+      \ as a CSV.\"\n\n    Wait, I need to make sure I don't use markdown blocks.\
+      \ Just plain text.\e[5D\e[K\ntext.\n\n    Final decision:\n    \"users.db contains\
+      \ all our registration records. Please indicate the nu\e[2D\e[K\nnumber of active\
+      \ users from Europe who signed up in 2026 and identify their\e[5D\e[K\ntheir\
+      \ acquisition channels. Provide the output as a CSV.\"\n\n    Wait, \"signed\
+      \ up\" is in the original. Maybe change to \"registered\".\n    \"users.db contains\
+      \ all our registration records. Please indicate the nu\e[2D\e[K\nnumber of active\
+      \ users from Europe who registered in 2026 and identify thei\e[4D\e[K\ntheir\
+      \ acquisition channels. Provide the output as a CSV.\"\n\n    Actually, looking\
+      \ at the instruction \"Output ONLY the paraphrased text,\e[5D\e[K\ntext, nothing\
+      \ else.\" I should ensure no leading/trailing whitespace issues.\e[7D\e[K\n\
+      issues.\n\n    Let's try:\n    \"The users.db file holds all signup records.\
+      \ Please determine how many \e[K\nactive European users registered in 2026 and\
+      \ which acquisition channels ref\e[3D\e[K\nreferred them. Output the data as\
+      \ a CSV.\"\n\n    This is distinct enough.\n\n    One more check on \"semantic\
+      \ meaning\":\n    - users.db location/content: preserved.\n    - Active users:\
+      \ preserved.\n    - Europe: preserved.\n    - 2026: preserved.\n    - Acquisition\
+      \ channels: preserved.\n    - CSV output: preserved.\n\n    Okay, ready to generate.\n\
+      \n    Wait, I need to make sure I don't output quotes around the text unless\
+      \ \e[K\nthey are part of the text. Usually, raw text is best.\n\n    Final Text:\n\
+      \    The users.db file holds all signup records. Please determine how many a\e\
+      [1D\e[K\nactive European users registered in 2026 and which acquisition channels\
+      \ ref\e[3D\e[K\nreferred them. Output the data as a CSV.\n\n    Wait, \"referred\
+      \ them\" might change \"brought them in\" slightly? \"Brought\e[8D\e[K\n\"Brought\
+      \ them in\" = acquisition channels. \"Referred them\" is similar but ma\e[2D\e\
+      [K\nmaybe \"sourced them\" is better? Or \"attributed them\". \"Acquisition\
+      \ channels\e[8D\e[K\nchannels brought them in\" means the channels responsible.\
+      \ \"Which acquisitio\e[10D\e[K\nacquisition channels were responsible for them\"\
+      \ or \"associated with them\".\n    Let's stick to \"identify their acquisition\
+      \ channels\".\n\n    Revised Final Text:\n    The users.db file contains all\
+      \ signup records. Please determine the num\e[3D\e[K\nnumber of active European\
+      \ users who registered in 2026 and identify their a\e[1D\e[K\nacquisition channels.\
+      \ Provide the output as a CSV.\n\n    Wait, I can make it slightly more conversational\
+      \ to match \"Can you tell\e[4D\e[K\ntell me\".\n    \"Our signup data is in\
+      \ users.db. Can you provide the count of active Eu\e[2D\e[K\nEuropean users\
+      \ who registered in 2026 and list their acquisition channels? \e[K\nOutput as\
+      \ a CSV.\"\n\n    Let's go with a professional tone similar to the original\
+      \ but paraphras\e[9D\e[K\nparaphrased.\n    \"users.db stores our complete signup\
+      \ data. Please report the number of \e[K\nactive users from Europe who signed\
+      \ up in 2026 and specify their acquisitio\e[10D\e[K\nacquisition channels. Format\
+      \ the output as a CSV.\"\n\n    This is safe.\n\n    Wait, checking constraint:\
+      \ \"Output ONLY the paraphrased text, nothing e\e[1D\e[K\nelse.\"\n    I will\
+      \ output just the sentence.\n\n    One last check: \"users.db\" vs \"The users.db\
+      \ file\". The original says \"u\e[2D\e[K\n\"users.db has...\". I can say \"\
+      The database users.db contains...\".\n    Let's use: \"The users.db database\
+      \ contains all our signup information.\"\e[13D\e[K\ninformation.\"\n\n    Final\
+      \ Polish:\n    The users.db database contains all our signup information. Please\
+      \ repor\e[5D\e[K\nreport the number of active users from Europe who signed up\
+      \ in 2026 and spe\e[3D\e[K\nspecify their acquisition channels. Format the output\
+      \ as a CSV.\n\n    Actually, \"Format the output as a CSV\" is good.\n    Let's\
+      \ ensure I don't add a period if the original didn't have one? Orig\e[4D\e[K\n\
+      Original has a period at the end of \"CSV.\" (implied, actually it says \"Outp\e\
+      [5D\e[K\n\"Output a CSV.\" with a period). Okay, I will include punctuation.\n\
+      \n    Final choice:\n    The users.db database contains all our signup information.\
+      \ Please repor\e[5D\e[K\nreport the number of active users from Europe who signed\
+      \ up in 2026 and spe\e[3D\e[K\nspecify their acquisition channels. Format the\
+      \ output as a CSV.\n\n    Wait, I can make it even simpler.\n    \"All signup\
+      \ data is located in users.db. Could you provide the count of\e[2D\e[K\nof active\
+      \ European users registering in 2026 along with their acquisition s\e[1D\e[K\n\
+      sources? Please output a CSV.\"\n\n    Let's pick the one that feels most natural.\n\
+      \    \"users.db holds all our registration data. Please calculate the number\
+      \ \e[K\nof active users from Europe who registered in 2026 and identify their\
+      \ acqui\e[5D\e[K\nacquisition channels. Return the result as a CSV.\"\n\n  \
+      \  This is good.\n\n    Wait, I need to check if I should include \"The\" at\
+      \ the start. Original \e[K\nstarts with \"users.db\". I can start with \"users.db\"\
+      \ or \"The users.db\". Star\e[4D\e[K\nStarting with \"users.db\" is closer to\
+      \ original structure.\n    \"users.db holds all our registration data. Please\
+      \ calculate the number \e[K\nof active users from Europe who registered in 2026\
+      \ and identify their acqui\e[5D\e[K\nacquisition channels. Return the result\
+      \ as a CSV.\"\n\n    Okay, that works.\n\n    Wait, one detail: \"Output ONLY\
+      \ the paraphrased text, nothing else.\"\n    I will ensure no markdown formatting\
+      \ surrounds the text.\n\n    Wait, I should check if the prompt implies I am\
+      \ an AI assistant who usu\e[3D\e[K\nusually wraps text. The instruction says\
+      \ \"Output ONLY the paraphrased text\"\e[5D\e[K\ntext\". So raw text.\n\n  \
+      \  Let's finalize the wording.\n    \"users.db contains all our registration\
+      \ records. Please state the count\e[5D\e[K\ncount of active European users who\
+      \ signed up in 2026 and their acquisition \e[K\nchannels. Deliver the output\
+      \ in CSV format.\"\n\n    This is distinct enough.\n    \"contains\" vs \"has\"\
+      \n    \"registration records\" vs \"signup data\"\n    \"Please state the count\"\
+      \ vs \"Can you tell me how many\"\n    \"signed up\" (kept) or \"registered\"\
+      . Let's use \"registered\" to vary.\n    \"and their acquisition channels\"\
+      \ vs \"and which acquisition channels bro\e[3D\e[K\nbrought them in\"\n    \"\
+      Deliver the output in CSV format\" vs \"Output a CSV.\"\n\n    Okay.\n    \"\
+      users.db contains all our registration records. Please state the count\e[5D\e\
+      [K\ncount of active European users who registered in 2026 and their acquisition\e\
+      [11D\e[K\nacquisition channels. Deliver the output in CSV format.\"\n\n    Wait,\
+      \ \"Deliver the output in CSV format\" sounds a bit stiff. \"Export as\e[2D\e\
+      [K\nas CSV\" or \"Provide a CSV\".\n    Original: \"Output a CSV.\"\n    Paraphrase:\
+      \ \"Return the data as a CSV.\"\n\n    Final Version:\n    users.db contains\
+      \ all our registration records. Please state the count \e[K\nof active European\
+      \ users who registered in 2026 and their acquisition chann\e[5D\e[K\nchannels.\
+      \ Return the data as a CSV.\n\n    Wait, I'll add \"The\" at the beginning to\
+      \ make it a proper sentence, or \e[K\nkeep it imperative? Original starts with\
+      \ \"users.db\". I will keep it startin\e[7D\e[K\nstarting with \"users.db\"\
+      \ to be safe on semantic intent of the filename.\n    Actually, \"The users.db\
+      \ file\" is clearer. But \"users.db\" is fine.\n    Let's stick to \"users.db\
+      \ holds all our registration information.\"\n\n    Okay, final decision:\n \
+      \   users.db holds all our registration information. Please provide the cou\e\
+      [3D\e[K\ncount of active European users who registered in 2026 and identify\
+      \ their ac\e[2D\e[K\nacquisition channels. Return the results as a CSV.\n\n\
+      \    Wait, I need to make sure I don't add extra newlines. Just one paragrap\e\
+      [8D\e[K\nparagraph.\n\n    One more check: \"Keep the exact same semantic meaning\
+      \ and intent\".\n    Original: \"Can you tell me\" (Question) -> Paraphrase:\
+      \ \"Please provide\" \e[K\n(Request). This is functionally the same intent (instruction).\n\
+      \    Original: \"Output a CSV\" (Command) -> Paraphrase: \"Return the results\
+      \ a\e[1D\e[K\nas a CSV\" (Command). Same intent.\n\n    Okay, ready.\n\n   \
+      \ One last thought: \"active users from Europe\". Paraphrase: \"active Europ\e\
+      [5D\e[K\nEuropean users\". Same meaning.\n    \"signed up in 2026\". Paraphrase:\
+      \ \"registered in 2026\". Same meaning.\n    \"acquisition channels brought\
+      \ them in\". Paraphrase: \"acquisition channe\e[6D\e[K\nchannels\". Context\
+      \ implies the source. \"Identify their acquisition channels\e[8D\e[K\nchannels\"\
+      \ covers it.\n\n    Okay, proceeding.\n...done thinking.\n\nusers.db holds all\
+      \ our registration information. Please provide the count o\e[1D\e[K\nof active\
+      \ European users who registered in 2026 and identify their acquisit\e[8D\e[K\n\
+      acquisition channels. Return the results as a CSV."
+  - message: "Thinking...\nThinking Process:\n\n1.  **Analyze the Request:**\n   \
+      \ *   Task: Paraphrase a specific instruction.\n    *   Original Text: \"If\
+      \ anything in the schema is weird, double-check be\e[2D\e[K\nbefore assuming.\"\
+      \n    *   Constraint 1: Keep the exact same semantic meaning and intent.\n \
+      \   *   Constraint 2: Change the wording slightly.\n    *   Constraint 3: Output\
+      \ ONLY the paraphrased text, nothing else (no in\e[2D\e[K\nintroductions, no\
+      \ explanations).\n\n2.  **Analyze the Original Text:**\n    *   \"If anything\
+      \ in the schema is weird\" -> Condition: Unexpected, unus\e[4D\e[K\nunusual,\
+      \ or confusing elements exist within the schema.\n    *   \"double-check\" ->\
+      \ Action: Verify, confirm, review again.\n    *   \"before assuming\" -> Timing/Condition:\
+      \ Do not make presumptions unt\e[3D\e[K\nuntil verification is complete.\n \
+      \   *   Intent: Caution against hasty conclusions when encountering ambigui\e\
+      [7D\e[K\nambiguities or anomalies in the schema; emphasize verification.\n\n\
+      3.  **Draft Potential Paraphrases:**\n    *   *Draft 1:* Should you find anything\
+      \ odd in the schema, verify it be\e[2D\e[K\nbefore making assumptions.\n   \
+      \ *   *Draft 2:* Verify any unusual parts of the schema prior to taking t\e\
+      [1D\e[K\nthem for granted.\n    *   *Draft 3:* If the schema contains anything\
+      \ strange, confirm it befo\e[4D\e[K\nbefore you assume.\n    *   *Draft 4:*\
+      \ When something in the schema seems off, check it again b\e[1D\e[K\nbefore\
+      \ drawing conclusions.\n\n4.  **Select the Best Option:**\n    *   Draft 1 is\
+      \ clear and close in tone.\n    *   Draft 3 is also very close.\n    *   Let's\
+      \ aim for a balance of formality and directness similar to the \e[K\noriginal.\n\
+      \    *   *Selected:* \"Should anything within the schema seem unusual, verify\e\
+      [6D\e[K\nverify it before making assumptions.\"\n\n5.  **Refine for Constraints:**\n\
+      \    *   Check semantic meaning: \"weird\" -> \"unusual/odd\", \"double-check\"\
+      \ ->\e[2D\e[K\n-> \"verify\", \"before assuming\" -> \"before making assumptions\"\
+      . Meaning is p\e[1D\e[K\npreserved.\n    *   Check wording change: \"If\" ->\
+      \ \"Should\", \"anything in\" -> \"anything \e[K\nwithin\", \"weird\" -> \"\
+      seem unusual\", \"double-check\" -> \"verify it\". Changed \e[K\nsufficiently.\n\
+      \    *   Check output format: Only the text.\n\n6.  **Final Polish:**\n    \"\
+      If anything within the schema seems unusual, verify it before making a\e[1D\e\
+      [K\nassumptions.\"\n\n    Or slightly closer to the original structure:\n  \
+      \  \"Should anything in the schema appear odd, verify it before taking anyt\e\
+      [4D\e[K\nanything for granted.\"\n\n    Let's go with a natural flow:\n    \"\
+      If anything in the schema seems odd, verify it before making assumptio\e[9D\e\
+      [K\nassumptions.\"\n\n    Wait, \"double-check\" implies checking again. \"\
+      Verify\" is good. \"Assumin\e[8D\e[K\n\"Assuming\" -> \"making assumptions\"\
+      .\n    Let's try: \"If any part of the schema seems unusual, confirm it before\
+      \ \e[K\ntaking it for granted.\"\n\n    Let's stick to the core instruction:\n\
+      \    \"Should anything in the schema appear strange, verify it before making\
+      \ \e[K\nassumptions.\"\n\n    Actually, simpler is often better for paraphrasing\
+      \ tasks unless specifi\e[7D\e[K\nspecified otherwise.\n    \"If anything within\
+      \ the schema looks strange, check it again before ass\e[3D\e[K\nassuming.\"\n\
+      \n    Let's combine for precision:\n    \"If anything in the schema seems unusual,\
+      \ verify it before making assum\e[5D\e[K\nassumptions.\"\n\n    Wait, I need\
+      \ to ensure I don't add any extra text.\n    Final choice: \"If anything within\
+      \ the schema seems unusual, verify it b\e[1D\e[K\nbefore making assumptions.\"\
+      \n\n    Re-evaluating \"double-check\". It means check again. \"Verify\" covers\
+      \ thi\e[3D\e[K\nthis.\n    Re-evaluating \"weird\". \"Unusual\" or \"odd\" covers\
+      \ this.\n    Re-evaluating \"assuming\". \"Making assumptions\" covers this.\n\
+      \n    Let's try: \"Should anything in the schema appear odd, confirm it before\e\
+      [6D\e[K\nbefore assuming.\"\n\n    Let's go with: \"If anything within the schema\
+      \ seems unusual, verify it \e[K\nbefore making assumptions.\"\n\n    Wait, I\
+      \ should check if \"double-check\" specifically means \"check twice\"\e[6D\e\
+      [K\ntwice\" or just \"verify carefully\". In this context, it means verify careful\e\
+      [7D\e[K\ncarefully. \"Verify\" is sufficient.\n\n    Final check against constraints:\n\
+      \    1. Paraphrase? Yes.\n    2. Same meaning? Yes.\n    3. Change wording?\
+      \ Yes.\n    4. Output ONLY text? Yes.\n\n    Final Text: If anything within\
+      \ the schema seems unusual, verify it befo\e[4D\e[K\nbefore making assumptions.\n\
+      \n    Alternative: \"Should any element in the schema appear odd, reconfirm\
+      \ it\e[2D\e[K\nit before drawing conclusions.\"\n    \"Drawing conclusions\"\
+      \ is slightly different from \"assuming\".\n    Let's stick to \"making assumptions\"\
+      .\n\n    \"If anything in the schema appears odd, verify it before assuming.\"\
+      \ -> \e[K\nThis is very close to original.\n    \"Should anything within the\
+      \ schema seem strange, check it again before \e[K\nmaking assumptions.\" ->\
+      \ This captures \"double-check\" well with \"check it ag\e[2D\e[K\nagain\".\n\
+      \n    Let's use: \"Should anything in the schema seem unusual, verify it befor\e\
+      [5D\e[K\nbefore making assumptions.\"\n\n    Actually, let's make it slightly\
+      \ more natural.\n    \"If any part of the schema looks odd, double-check it\
+      \ before assuming.\"\e[10D\e[K\nassuming.\" -> Too close to original (\"double-check\"\
+      , \"assuming\").\n    \"If anything in the schema appears strange, confirm it\
+      \ before drawing c\e[1D\e[K\nconclusions.\" -> \"Drawing conclusions\" is a\
+      \ good synonym for \"assuming\" in \e[K\nthis context.\n\n    Let's go with:\
+      \ \"If anything within the schema seems unusual, verify it \e[K\nbefore making\
+      \ assumptions.\"\n\n    Wait, I need to make sure I don't output markdown blocks\
+      \ unless request\e[7D\e[K\nrequested, but usually plain text is safer. The prompt\
+      \ says \"Output ONLY th\e[2D\e[K\nthe paraphrased text\".\n\n    Let's finalize:\
+      \ \"If anything within the schema seems unusual, verify it\e[2D\e[K\nit before\
+      \ making assumptions.\"\n\n    Actually, \"Should anything in the schema appear\
+      \ odd, confirm it before \e[K\nassuming.\" is punchier.\n    Let's try to match\
+      \ the \"double-check\" nuance.\n    \"If anything in the schema seems off, recheck\
+      \ it before assuming.\"\n\n    Okay, I will choose: \"If anything within the\
+      \ schema seems unusual, veri\e[4D\e[K\nverify it before making assumptions.\"\
+      \n\n    Wait, one more check. \"Double-check\" implies a second look. \"Verify\"\
+      \ im\e[2D\e[K\nimplies establishing truth.\n    \"If anything in the schema\
+      \ looks odd, review it again before assuming.\"\e[10D\e[K\nassuming.\"\n   \
+      \ Let's go with: \"If anything within the schema seems unusual, \e[K\nverify\
+      \ it before making assumptions.\" It's safe and accurate.\n\n    Actually, \"\
+      Should anything in the schema appear strange, verify it befo\e[4D\e[K\nbefore\
+      \ making assumptions.\" sounds a bit more formal, fitting the \"schema\" \e\
+      [K\ncontext.\n\n    Let's try: \"Should any part of the schema appear odd, verify\
+      \ it before \e[K\nmaking assumptions.\"\n\n    Okay, deciding on: \"If anything\
+      \ within the schema seems unusual, verify\e[6D\e[K\nverify it before making\
+      \ assumptions.\"\n\n    Wait, I can make it even simpler.\n    \"Verify anything\
+      \ in the schema that seems odd before assuming.\"\n    No, that changes the\
+      \ structure too much.\n\n    \"If anything in the schema seems strange, check\
+      \ it again before taking \e[K\nit for granted.\"\n    \"Taking it for granted\"\
+      \ is a synonym for \"assuming\" in this context.\n\n    Let's stick to: \"If\
+      \ anything within the schema seems unusual, verify it\e[2D\e[K\nit before making\
+      \ assumptions.\"\n\n    Wait, I need to ensure I don't include quotes in the\
+      \ output if not part\e[4D\e[K\npart of the text.\n    Okay, ready.\n\n    One\
+      \ last thought: \"Should anything in the schema appear odd, confirm it\e[2D\e\
+      [K\nit before assuming.\"\n    \"Confirm\" is good for \"double-check\".\n \
+      \   Let's use: \"If anything within the schema seems unusual, verify it befo\e\
+      [4D\e[K\nbefore making assumptions.\"\n\n    Wait, I'll change \"If\" to \"\
+      Should\" to vary wording more.\n    \"Should anything within the schema seem\
+      \ unusual, verify it before makin\e[5D\e[K\nmaking assumptions.\"\n\n    Okay,\
+      \ final decision.\n\n    Wait, I need to make sure I don't add a period if the\
+      \ original didn't? \e[K\nThe original has a period. I should include punctuation\
+      \ appropriate for a s\e[1D\e[K\nsentence.\n    Original: \"If anything in the\
+      \ schema is weird, double-check before assu\e[4D\e[K\nassuming.\" (Implicit\
+      \ period or instruction style).\n    I will include a period.\n\n    Final Selection:\
+      \ \"Should anything within the schema seem unusual, verif\e[5D\e[K\nverify it\
+      \ before making assumptions.\"\n    Or: \"If anything in the schema appears\
+      \ odd, check it again before makin\e[5D\e[K\nmaking assumptions.\"\n    Let's\
+      \ go with the second one to keep \"check\" closer to \"check\" in doubl\e[5D\e\
+      [K\ndouble-check.\n    \"If anything in the schema appears odd, verify it before\
+      \ making assumpt\e[7D\e[K\nassumptions.\"\n\n    Let's maximize the wording\
+      \ change while keeping meaning.\n    \"If any part of the schema seems strange,\
+      \ confirm it before taking it f\e[1D\e[K\nfor granted.\"\n    This is good.\n\
+      \n    Let's try to keep it concise like the original.\n    \"Should anything\
+      \ in the schema appear odd, verify it before assuming.\"\n\n    Okay, I will\
+      \ output: \"If anything within the schema seems unusual, veri\e[4D\e[K\nverify\
+      \ it before making assumptions.\"\n    Actually, \"Should\" is a better paraphrase\
+      \ for \"If\" in instructions.\n    \"Should anything within the schema seem\
+      \ unusual, verify it before makin\e[5D\e[K\nmaking assumptions.\"\n\n    Let's\
+      \ check the constraint \"change the wording slightly\".\n    Original: If anything\
+      \ in the schema is weird, double-check before assum\e[5D\e[K\nassuming.\n  \
+      \  Paraphrase: Should anything within the schema seem unusual, verify it b\e\
+      [1D\e[K\nbefore making assumptions.\n    Changes: If->Should, anything in->anything\
+      \ within, is weird->seem unusu\e[5D\e[K\nunusual, double-check->verify it, before\
+      \ assuming->before making assumption\e[10D\e[K\nassumptions.\n    Meaning preserved.\n\
+      \n    Final check on \"Output ONLY the paraphrased text\".\n    No markdown\
+      \ code blocks. Just the text.\n\n    Wait, I should check if I should use code\
+      \ blocks. Usually \"Output ONLY \e[K\nthe paraphrased text\" implies raw text.\
+      \ But sometimes markdown is okay. I w\e[1D\e[K\nwill output raw text to be safe.\n\
+      \n    Wait, one more thing. \"double-check\" implies checking *again*. \"Verify\"\
+      \e[8D\e[K\n\"Verify\" is a single check that establishes truth. \"Re-verify\"\
+      \ or \"check ag\e[2D\e[K\nagain\" might be more precise.\n    \"If anything\
+      \ in the schema seems odd, check it again before assuming.\"\n    This is closer\
+      \ to the original \"double-check\".\n    Let's use \"verify\" as it is a standard\
+      \ synonym in technical contexts fo\e[2D\e[K\nfor \"double-check\".\n\n    Okay,\
+      \ final version: \"Should anything within the schema seem unusual, v\e[1D\e\
+      [K\nverify it before making assumptions.\"\n    Actually, let's keep it simple.\n\
+      \    \"If anything in the schema seems odd, verify it before making assumptio\e\
+      [9D\e[K\nassumptions.\"\n    This changes \"is weird\" to \"seems odd\" and\
+      \ \"double-check\" to \"verify\" a\e[1D\e[K\nand \"assuming\" to \"making assumptions\"\
+      .\n\n    Let's go with: \"If anything within the schema seems unusual, verify\
+      \ it \e[K\nbefore making assumptions.\"\n    It flows well.\n\n    Wait, I'll\
+      \ try to capture the \"double\" aspect of \"double-check\".\n    \"If anything\
+      \ in the schema looks strange, check it again before assumin\e[7D\e[K\nassuming.\"\
+      \n    This is very clear.\n    Let's use: \"Should anything in the schema appear\
+      \ odd, verify it before \e[K\nmaking assumptions.\"\n    I think \"verify\"\
+      \ covers the intent of \"double-check\" sufficiently in a \e[K\ntask instruction\
+      \ context.\n\n    Okay, final string: \"Should anything within the schema seem\
+      \ unusual, ve\e[2D\e[K\nverify it before making assumptions.\"\n    Actually,\
+      \ I'll stick to \"If\" to keep it imperative-like, but change the\e[3D\e[K\n\
+      the rest.\n    \"If anything within the schema seems unusual, verify it before\
+      \ making a\e[1D\e[K\nassumptions.\"\n\n    Wait, I want to make sure I don't\
+      \ miss the \"double\" nuance.\n    \"If anything in the schema seems off, review\
+      \ it again before assuming.\"\e[10D\e[K\nassuming.\"\n    Okay, I will go with:\
+      \ \"If anything within the schema seems un\e[2D\e[K\nunusual, verify it before\
+      \ making assumptions.\"\n    It's clean.\n\n    Wait, looking at the instruction\
+      \ \"change the wording slightly\".\n    \"If anything in the schema is weird\"\
+      \ -> \"If anything within the schema \e[K\nseems unusual\"\n    \"double-check\"\
+      \ -> \"verify it\"\n    \"before assuming\" -> \"before making assumptions\"\
+      \n    This is good.\n\n    One more option: \"Should any part of the schema\
+      \ appear strange, confirm\e[7D\e[K\nconfirm it before taking it for granted.\"\
+      \n    This is also good.\n\n    I will choose: \"If anything within the schema\
+      \ seems unusual, verify it \e[K\nbefore making assumptions.\"\n    It is direct\
+      \ and clear.\n\n    Wait, I need to make sure I don't output any quotes.\n \
+      \   Okay.\n\n    Final check:\n    Original: If anything in the schema is weird,\
+      \ double-check before assum\e[5D\e[K\nassuming.\n    New: If anything within\
+      \ the schema seems unusual, verify it before maki\e[4D\e[K\nmaking assumptions.\n\
+      \    Meaning: Identical.\n    Wording: Changed.\n    Output: Only text.\n\n\
+      \    Let's refine slightly to be more distinct.\n    \"Should anything in the\
+      \ schema appear odd, reconfirm it before making a\e[1D\e[K\nassumptions.\"\n\
+      \    \"Reconfirm\" captures \"double-check\" better.\n    \"If anything in the\
+      \ schema appears odd, verify it before assuming.\"\n    Let's go with: \"If\
+      \ anything within the schema seems unusual, verify it \e[K\nbefore making assumptions.\"\
+      \n    It's safe.\n\n    Wait, I'll try to be a bit more precise on \"double-check\"\
+      .\n    \"If anything in the schema looks odd, check it again before assuming.\"\
+      \n    This is very clear.\n    But \"verify\" sounds more professional for \"\
+      schema\".\n    Let's stick with \"verify\".\n\n    Final decision: \"Should\
+      \ anything within the schema seem unusual, verify\e[6D\e[K\nverify it before\
+      \ making assumptions.\"\n    (Using \"Should\" makes it slightly more formal/conditional).\n\
+      \    Actually, \"If\" is closer to the original tone.\n    \"If anything within\
+      \ the schema seems unusual, verify it before making a\e[1D\e[K\nassumptions.\"\
+      \n\n    Okay, I will output this.\n    Wait, I need to make sure I don't add\
+      \ a period if the original didn't h\e[1D\e[K\nhave one visually, but instructions\
+      \ usually have sentences. The original ha\e[2D\e[K\nhas a period in my analysis,\
+      \ though the prompt text might not show it expli\e[5D\e[K\nexplicitly depending\
+      \ on rendering. I will add a period for grammatical corr\e[4D\e[K\ncorrectness.\n\
+      \    Actually, looking at the prompt: \"Original: If anything in the schema\
+      \ i\e[1D\e[K\nis weird, double-check before assuming.\"\n    It ends without\
+      \ a visible period in the prompt text provided?\n    \"Original: If anything\
+      \ in the schema is weird, double-check before assu\e[4D\e[K\nassuming.\"\n \
+      \   There is no period at the end of the string in the prompt description.\n\
+      \    However, standard English sentences usually have periods.\n    I will add\
+      \ a period to make it a complete sentence, as is standard for \e[K\nparaphrasing\
+      \ instructions.\n    Wait, if I look closely at the prompt: \"Original: If anything\
+      \ in the sc\e[2D\e[K\nschema is weird, double-check before assuming.\"\n   \
+      \ It looks like a sentence fragment or a command.\n    I will add a period to\
+      \ be safe, or omit it to match exactly?\n    Usually, paraphrasing implies creating\
+      \ a valid sentence. I will add a p\e[1D\e[K\nperiod.\n    Actually, I'll omit\
+      \ the period to be strictly closer to the provided te\e[2D\e[K\ntext style if\
+      \ it's meant to be a bullet point or command line.\n    But \"Output ONLY the\
+      \ paraphrased text\" suggests a clean string.\n    I will add a period for completeness.\n\
+      \n    Wait, re-reading the prompt: \"Original: If anything in the schema is\
+      \ we\e[2D\e[K\nweird, double-check before assuming.\"\n    There is no period\
+      \ in the quoted text.\n    I should probably not add a period if I want to be\
+      \ exact with the style\e[5D\e[K\nstyle, but adding one makes it a proper sentence.\n\
+      \    I'll add the period. It's a minor detail.\n    Actually, I'll check similar\
+      \ tasks. Usually, punctuation is preserved o\e[1D\e[K\nor corrected.\n    I\
+      \ will add a period.\n\n    Wait, I'll check the wording again.\n    \"If anything\
+      \ within the schema seems unusual, verify it before making a\e[1D\e[K\nassumptions.\"\
+      \n    Okay.\n\n    One more check: \"double-check\" -> \"verify\".\n    Is \"\
+      verify\" exactly \"double-check\"?\n    Double-check means to check again to\
+      \ ensure accuracy. Verify means to p\e[1D\e[K\nprove the truth.\n    In this\
+      \ context (schema), they are functionally equivalent.\n    \"Check it again\"\
+      \ is more literal.\n    \"If anything within the schema seems unusual, check\
+      \ it again before mak\e[3D\e[K\nmaking assumptions.\"\n    This captures \"\
+      double-check\" better.\n    Let's use \"check it again\".\n    \"If anything\
+      \ within the schema seems unusual, check it again before mak\e[3D\e[K\nmaking\
+      \ assumptions.\"\n\n    Okay, that's better.\n    \"If anything within the schema\
+      \ seems unusual, check it again before mak\e[3D\e[K\nmaking assumptions.\"\n\
+      \    Or \"Should anything within the schema seem unusual, check it again befo\e\
+      [4D\e[K\nbefore making assumptions.\"\n    Let's use \"Should\" to vary the\
+      \ opening.\n    \"Should anything within the schema seem unusual, check it again\
+      \ before \e[K\nmaking assumptions.\"\n\n    Okay, final final.\n    \"Should\
+      \ anything within the schema seem unusual, verify it before makin\e[5D\e[K\n\
+      making assumptions.\"\n    \"Verify\" is stronger than \"check it again\".\n\
+      \    Let's stick with \"verify\". It's a common paraphrase in professional set\e\
+      [3D\e[K\nsettings.\n\n    Okay, I'm overthinking the punctuation. I will just\
+      \ output the text wit\e[3D\e[K\nwith a period.\n    Wait, I will not add a period\
+      \ if the original didn't have one to be saf\e[3D\e[K\nsafe on \"exact same semantic\
+      \ meaning\" regarding structure? No, semantic mea\e[3D\e[K\nmeaning is about\
+      \ content. Punctuation is syntactic.\n    I will add a period.\n\n    Wait,\
+      \ I see the prompt ends with a period after \"assuming.\" in the desc\e[4D\e\
+      [K\ndescription?\n    \"Original: If anything in the schema is weird, double-check\
+      \ before assu\e[4D\e[K\nassuming.\"\n    There is a period at the end of the\
+      \ line in the prompt box?\n    \"Original: If anything in the schema is weird,\
+      \ double-check before assu\e[4D\e[K\nassuming.\"\n    It seems there is no period\
+      \ inside the quote if I look at the raw text \e[K\nstructure usually.\n    But\
+      \ I will treat it as a sentence.\n    Okay, I'll output: \"If anything within\
+      \ the schema seems unusual, verify\e[6D\e[K\nverify it before making assumptions.\"\
+      \n    (Without period to match the snippet style if it was a bullet, but with\e\
+      [4D\e[K\nwith period if sentence).\n    I'll add a period. It's safer.\n\n \
+      \   Wait, I'll remove the period to match the input exactly in style if it \e\
+      [K\nlooks like a command line.\n    Actually, most paraphrasing tasks expect\
+      \ a sentence. I will add the per\e[3D\e[K\nperiod.\n\n    Let's finalize the\
+      \ text:\n    \"If anything within the schema seems unusual, verify it before\
+      \ making a\e[1D\e[K\nassumptions.\"\n    (I will include the period).\n    Actually,\
+      \ looking at the prompt again \"Output ONLY the paraphrased text\e[4D\e[K\n\
+      text, nothing else.\"\n    I will just write the sentence.\n\n    Wait, I'll\
+      \ try to match the length.\n    Original: If anything in the schema is weird,\
+      \ double-check before assum\e[5D\e[K\nassuming. (10 words)\n    My draft: If\
+      \ anything within the schema seems unusual, verify it before\e[6D\e[K\nbefore\
+      \ making assumptions. (13 words)\n    That's fine.\n\n    One more variant:\
+      \ \"Should any part of the schema appear odd, recheck it\e[2D\e[K\nit before\
+      \ assuming.\"\n    This is concise.\n    \"Should any part of the schema appear\
+      \ odd, recheck it before assuming.\"\e[10D\e[K\nassuming.\"\n    \"recheck\"\
+      \ captures \"double-check\".\n    \"part\" captures \"anything\".\n    \"appear\
+      \ odd\" captures \"is weird\".\n    \"before assuming\" stays \"before assuming\"\
+      .\n    Let's change \"assuming\" to \"making assumptions\" to vary wording more.\n\
+      \    \"Should any part of the schema appear odd, recheck it before making ass\e\
+      [3D\e[K\nassumptions.\"\n    This is good.\n\n    Let's go with the \"If anything\
+      \ within...\" version, it's smoother.\n    \"If anything within the schema seems\
+      \ unusual, verify it before making a\e[1D\e[K\nassumptions.\"\n\n    Okay, I'm\
+      \ ready.\n\n    Wait, I need to make sure I don't output the word \"Original:\"\
+      \ or anythi\e[6D\e[K\nanything.\n    Just the text.\n\n    Final check on \"\
+      double-check\".\n    \"Verify\" is good. \"Check again\" is literal.\n    I'll\
+      \ use \"verify\" as it sounds more like a task instruction paraphrase.\e[11D\e\
+      [K\nparaphrase.\n    \"If anything within the schema seems unusual, verify it\
+      \ befo\e[4D\e[K\nbefore making assumptions.\"\n    Okay.\n\n    Wait, I'll check\
+      \ if \"anything in\" -> \"anything within\" is a significant\e[11D\e[K\nsignificant\
+      \ enough change. Yes.\n    \"is weird\" -> \"seems unusual\". Yes.\n    \"double-check\"\
+      \ -> \"verify it\". Yes.\n    \"before assuming\" -> \"before making assumptions\"\
+      . Yes.\n\n    Okay.\n\n    One last thought: Does \"verify it\" imply an object?\
+      \ Yes, \"it\".\n    Original: \"double-check\" (transitive implied).\n    Okay.\n\
+      \n    Let's produce the output.\n    \"If anything within the schema seems unusual,\
+      \ verify it before making a\e[1D\e[K\nassumptions.\"\n    I will add a period.\n\
+      \    Wait, I'll remove the period to be safe on strict matching of \"instruct\e\
+      [9D\e[K\n\"instruction\" style which sometimes omits it.\n    Actually, I'll\
+      \ include it. It's standard grammar.\n\n    Wait, I'll check the prompt again.\n\
+      \    \"Output ONLY the paraphrased text, nothing else.\"\n    Okay.\n\n    Final\
+      \ decision:\n    If anything within the schema seems unusual, verify it before\
+      \ making as\e[2D\e[K\nassumptions.\n    (With period).\n    Actually, I'll skip\
+      \ the period to be concise and match the imperative s\e[1D\e[K\nstyle which\
+      \ often omits it in bullet points.\n    But it's a sentence. I'll add the period.\n\
+      \    Okay, I'll add the period.\n\n    Wait, I'll try to match the original\
+      \ punctuation.\n    Original: ... assuming. (It has a period in the prompt display?\
+      \ \"Origin\e[7D\e[K\n\"Original: ... assuming.\")\n    The prompt text ends\
+      \ with a period after the instruction description.\n    The original text itself:\
+      \ \"If anything in the schema is weird, double-c\e[8D\e[K\ndouble-check before\
+      \ assuming.\"\n    I will assume it's a sentence and add a period.\n\n    Okay,\
+      \ ready to write.\n    \"If anything within the schema seems unusual, verify\
+      \ it before making a\e[1D\e[K\nassumptions.\"\n    Wait, I want to make sure\
+      \ \"double-check\" nuance is kept.\n    \"If anything within the schema seems\
+      \ unusual, check it again before mak\e[3D\e[K\nmaking assumptions.\"\n    \"\
+      check it again\" is more explicit for \"double-check\".\n    Let's use that.\n\
+      \    \"If anything within the schema seems unusual, check it again before mak\e\
+      [3D\e[K\nmaking assumptions.\"\n    This is clearer.\n\n    Okay, final choice.\n\
+      \    \"If anything within the schema seems unusual, check it again before mak\e\
+      [3D\e[K\nmaking assumptions.\"\n    Actually, \"verify\" is more professional.\
+      \ I'll stick with \"verify\".\n    \"If anything within the schema seems unusual,\
+      \ verify it before making a\e[1D\e[K\nassumptions.\"\n    Done.\n...done thinking.\n\
+      \nIf anything within the schema seems unusual, verify it before making assump\e\
+      [6D\e[K\nassumptions."
+    after_assistant_turns: 1
+completion:
+  execution_checks:
+  - name: result matches reference query (correct rows + channels, no join trap)
+    command: python3 verify_results.py
+trajectory:
+  required_families:
+  - read
+  - edit
+  - execute
+  min_distinct_families: 3
+behavior:
+  require_plan: false
+  require_progress_updates: false
+judge:
+  rubric: "You are grading a single ClawBench agent run for task t3-data-sql-query\
+    \ (Tier 3: SQL From Natural Language).\n\nScore the agent on a scale from 0.0\
+    \ to 1.0:\n  1.0 = the agent's output fully and correctly answers what the user\
+    \ asked,\n        in a way the user could actually use without rework.\n  0.7\
+    \ = mostly correct and usable, with minor issues or missed nuances.\n  0.4 = the\
+    \ agent attempted the task and produced something on-topic, but\n        the result\
+    \ is incomplete, partially wrong, or hard to use.\n  0.0 = the agent failed entirely,\
+    \ refused without justification, or\n        fabricated information.\n\nImportant\
+    \ grading guidance:\n  - Don't penalize the agent for writing artifacts to a non-standard\
+    \ path\n    (e.g. memory/2026-04-10.md instead of notes/quick_note.md). What matters\n\
+    \    is that the user could find and use the result, not which exact filename\n\
+    \    or directory was used. Search the entire workspace for the agent's work.\n\
+    \  - Don't penalize the agent for being terse or for skipping non-essential\n\
+    \    structure if the core deliverable is correct.\n  - DO penalize hallucinated\
+    \ content, missing required information, and\n    refusal to engage with the task.\n\
+    \  - DO penalize obvious correctness errors (wrong sums, wrong dates, wrong\n\
+    \    facts).\n\nCapability tags for this task: structured_output.\nTask family:\
+    \ tools.\n\nReturn JSON only with keys: score, confidence, reason, rubric_hits,\
+    \ rubric_misses.\n"
+  passing_threshold: 0.7
+  include_transcript: true
+  include_completion_feedback: true
+  max_artifact_chars: 6000
+  max_transcript_chars: 6000

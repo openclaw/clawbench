@@ -1,0 +1,250 @@
+id: t3-data-pipeline-report-perturbed
+name: 'Tier 3: Data Pipeline Report (Perturbed)'
+tier: tier3
+family: multi_tool
+surface: coding
+pool: public_dev
+subsets:
+- consensus
+capabilities:
+- structured_output
+- tool_composition
+timeout_seconds: 600
+setup:
+  asset_packs:
+  - t3_data_pipeline_report
+user:
+  max_turns: 2
+  turns:
+  - message: "Thinking...\nThinking Process:\n\n1.  **Analyze the Request:**\n   \
+      \ *   **Task:** Paraphrase the given instruction.\n    *   **Constraint 1:**\
+      \ Keep the exact same semantic meaning and intent.\n    *   **Constraint 2:**\
+      \ Change the wording slightly.\n    *   **Constraint 3:** Output ONLY the paraphrased\
+      \ text (no introduction\e[12D\e[K\nintroductions, no explanations, no markdown\
+      \ blocks unless part of the text \e[K\nitself).\n    *   **Original Text:**\
+      \ \"Build the missing data pipeline steps in the wo\e[2D\e[K\nworkspace so `python3\
+      \ pipeline.py input/sales.csv input/regions.json` print\e[5D\e[K\nprints the\
+      \ expected region report. Verify the final output.\"\n\n2.  **Deconstruct the\
+      \ Original Text:**\n    *   Action 1: \"Build the missing data pipeline steps\
+      \ in the workspace\" \e[K\n-> Create/implement the absent parts of the data\
+      \ processing flow within the\e[3D\e[K\nthe project directory.\n    *   Condition/Goal:\
+      \ \"so `python3 pipeline.py input/sales.csv input/regi\e[10D\e[K\ninput/regions.json`\
+      \ prints the expected region report\" -> Running this spec\e[4D\e[K\nspecific\
+      \ command should produce the correct output (region report).\n    *   Action\
+      \ 2: \"Verify the final output.\" -> Check that the result is co\e[2D\e[K\n\
+      correct.\n\n3.  **Drafting Paraphrases:**\n    *   *Draft 1:* Implement the\
+      \ absent data pipeline components in the wor\e[3D\e[K\nworkspace such that executing\
+      \ `python3 pipeline.py input/sales.csv input/re\e[8D\e[K\ninput/regions.json`\
+      \ outputs the correct region report. Confirm the resultin\e[8D\e[K\nresulting\
+      \ output.\n    *   *Draft 2:* Develop the missing steps for the data pipeline\
+      \ within t\e[1D\e[K\nthe workspace to ensure `python3 pipeline.py input/sales.csv\
+      \ input/regions.\e[14D\e[K\ninput/regions.json` generates the anticipated region\
+      \ report. Check the fina\e[4D\e[K\nfinal result.\n    *   *Draft 3:* Construct\
+      \ the omitted data pipeline logic in the workspa\e[7D\e[K\nworkspace so that\
+      \ running `python3 pipeline.py input/sales.csv input/region\e[12D\e[K\ninput/regions.json`\
+      \ displays the correct region report. Validate the end ou\e[2D\e[K\noutput.\n\
+      \n4.  **Selecting the Best Option:**\n    *   Draft 1 is clear and maintains\
+      \ the technical command exactly.\n    *   Draft 2 is also good.\n    *   Draft\
+      \ 3 is slightly more formal (\"Construct\", \"Validate\").\n\n    Let's go with\
+      \ a blend that sounds natural but changes enough words.\n    \"Implement the\
+      \ missing data pipeline components within the workspace to\e[2D\e[K\nto ensure\
+      \ `python3 pipeline.py input/sales.csv input/regions.json` generate\e[8D\e[K\n\
+      generates the correct region report. Validate the final output.\"\n\n    Check\
+      \ constraints:\n    *   Semantic meaning same? Yes (Implement missing parts\
+      \ -> Build missin\e[6D\e[K\nmissing steps, ensure generates correct report ->\
+      \ prints expected report, v\e[1D\e[K\nvalidate -> verify).\n    *   Wording\
+      \ changed slightly? Yes (Build -> Implement, steps -> compone\e[7D\e[K\ncomponents,\
+      \ workspace -> within the workspace, so -> to ensure, prints -> g\e[1D\e[K\n\
+      generates, expected -> correct, Verify -> Validate).\n    *   Output ONLY text?\
+      \ Yes.\n\n    Let's refine slightly to be closer to the original structure but\
+      \ distin\e[6D\e[K\ndistinct.\n    \"Implement the absent data pipeline stages\
+      \ in the workspace such that `\e[1D\e[K\n`python3 pipeline.py input/sales.csv\
+      \ input/regions.json` produces the inten\e[5D\e[K\nintended region report. Confirm\
+      \ the resulting output.\"\n\n    Wait, I need to make sure I don't alter the\
+      \ command string itself, as t\e[1D\e[K\nthat's a literal requirement for the\
+      \ script to work. The prompt says \"chang\e[6D\e[K\n\"change the wording slightly\"\
+      , usually implying the natural language parts.\e[6D\e[K\nparts. The code block\
+      \ should remain intact.\n\n    Revised Draft: \"Implement the missing data pipeline\
+      \ stages within the w\e[1D\e[K\nworkspace so that `python3 pipeline.py input/sales.csv\
+      \ input/regions.json` \e[K\ngenerates the anticipated region report. Check the\
+      \ final result.\"\n\n    Let's try to match the brevity of the original.\n \
+      \   \"Develop the missing data pipeline components in the workspace ensuring\e\
+      [8D\e[K\nensuring `python3 pipeline.py input/sales.csv input/regions.json` outputs\
+      \ t\e[1D\e[K\nthe correct region report. Validate the final result.\"\n\n  \
+      \  Let's pick one that flows well.\n    \"Implement the missing data pipeline\
+      \ stages in the workspace so `python\e[7D\e[K\n`python3 pipeline.py input/sales.csv\
+      \ input/regions.json` generates the anti\e[4D\e[K\nanticipated region report.\
+      \ Confirm the final output.\"\n\n    Actually, \"Build\" -> \"Create\" or \"\
+      Implement\". \"missing data pipeline st\e[2D\e[K\nsteps\" -> \"absent data pipeline\
+      \ components\". \"prints\" -> \"displays\" or \"gen\e[4D\e[K\n\"generates\"\
+      . \"expected\" -> \"intended\" or \"anticipated\". \"Verify\" -> \"Check\"\e\
+      [7D\e[K\n\"Check\" or \"Validate\".\n\n    Final choice: \"Implement the missing\
+      \ data pipeline components in the wo\e[2D\e[K\nworkspace so `python3 pipeline.py\
+      \ input/sales.csv input/regions.json` gener\e[5D\e[K\ngenerates the intended\
+      \ region report. Validate the final output.\"\n\n5.  **Final Review against\
+      \ Constraints:**\n    *   Only paraphrased text? Yes.\n    *   No markdown block\
+      \ around the whole thing? The prompt says \"Output O\e[1D\e[K\nONLY the paraphrased\
+      \ text\". Usually, this means raw text. However, if the o\e[1D\e[K\noriginal\
+      \ contains backticks for code, I should keep them.\n    *   Semantic meaning\
+      \ preserved? Yes.\n\n    Let's ensure the command stays exactly the same inside\
+      \ the backticks.\n    Original: `python3 pipeline.py input/sales.csv input/regions.json`\n\
+      \    Paraphrase: `python3 pipeline.py input/sales.csv input/regions.json`\n\n\
+      \    Okay, ready to generate.\n\n    One more check: \"Output ONLY the paraphrased\
+      \ text, nothing else.\"\n    I will output just the sentence.\n\n    \"Implement\
+      \ the absent data pipeline stages in the workspace such that `\e[1D\e[K\n`python3\
+      \ pipeline.py input/sales.csv input/regions.json` produces the antic\e[5D\e\
+      [K\nanticipated region report. Validate the final output.\"\n\n    This looks\
+      \ good.\n\n    Wait, I should check if \"workspace\" should be changed. \"in\
+      \ the workspac\e[8D\e[K\nworkspace\" -> \"within the project directory\" or\
+      \ just keep \"in the workspace\e[9D\e[K\nworkspace\". \"Change wording slightly\"\
+      \ allows keeping some words. \"workspace\e[10D\e[K\n\"workspace\" is a specific\
+      \ term often used in coding contexts, so I'll keep \e[K\nit or use \"directory\"\
+      . Let's keep \"workspace\" to be safe on semantics, chan\e[4D\e[K\nchange the\
+      \ verbs.\n\n    \"Construct the missing data pipeline steps within the workspace\
+      \ so `pyt\e[4D\e[K\n`python3 pipeline.py input/sales.csv input/regions.json`\
+      \ prints the correct\e[7D\e[K\ncorrect region report. Check the final output.\"\
+      \n    This is very close. Maybe change \"Build\" to \"Implement\" and \"Verify\"\
+      \ to\e[2D\e[K\nto \"Validate\".\n\n    \"Implement the missing data pipeline\
+      \ steps in the workspace so `python3\e[8D\e[K\n`python3 pipeline.py input/sales.csv\
+      \ input/regions.json` generates the expe\e[4D\e[K\nexpected region report. Confirm\
+      \ the final output.\"\n\n    Let's go with:\n    \"Implement the missing data\
+      \ pipeline components within the workspace so\e[2D\e[K\nso that `python3 pipeline.py\
+      \ input/sales.csv input/regions.json` generates \e[K\nthe intended region report.\
+      \ Validate the final output.\"\n\n    Actually, \"Build\" -> \"Create\". \"\
+      steps\" -> \"steps\". \"so\" -> \"such that\".\e[6D\e[K\nthat\". \"prints\"\
+      \ -> \"displays\". \"Verify\" -> \"Ensure\".\n\n    Let's try:\n    \"Create\
+      \ the missing data pipeline steps in the workspace such that `pyt\e[4D\e[K\n\
+      `python3 pipeline.py input/sales.csv input/regions.json` displays the corre\e\
+      [5D\e[K\ncorrect region report. Confirm the final output.\"\n\n    Okay, I will\
+      \ use:\n    \"Implement the missing data pipeline components within the workspace\
+      \ so\e[2D\e[K\nso `python3 pipeline.py input/sales.csv input/regions.json` generates\
+      \ the i\e[1D\e[K\nintended region report. Validate the final output.\"\n\n \
+      \   Wait, I need to make sure I don't add extra newlines or quotes. Just th\e\
+      [2D\e[K\nthe text.\n\n    Final Polish:\n    \"Implement the missing data pipeline\
+      \ steps within the workspace so `pyt\e[4D\e[K\n`python3 pipeline.py input/sales.csv\
+      \ input/regions.json` generates the anti\e[4D\e[K\nanticipated region report.\
+      \ Validate the final output.\"\n\n    Actually, \"steps\" is fine to keep. \"\
+      Build\" to \"Implement\". \"so\" to \"suc\e[4D\e[K\n\"such that\". \"prints\"\
+      \ to \"generates\". \"expected\" to \"anticipated\". \"Verify\"\e[8D\e[K\n\"\
+      Verify\" to \"Validate\".\n\n    \"Implement the missing data pipeline steps\
+      \ within the workspace such th\e[2D\e[K\nthat `python3 pipeline.py input/sales.csv\
+      \ input/regions.json` generates the\e[3D\e[K\nthe anticipated region report.\
+      \ Validate the final output.\"\n\n    This meets all criteria.\n\n    Wait,\
+      \ looking at the instruction \"Output ONLY the paraphrased text, not\e[3D\e\
+      [K\nnothing else.\"\n    I will ensure no markdown code block surrounds the\
+      \ output unless the te\e[2D\e[K\ntext itself requires it (like the command).\
+      \ I will output raw text.\n\n    Wait, if I output raw text, the backticks might\
+      \ be rendered. I should p\e[1D\e[K\npreserve the backticks as part of the text\
+      \ string.\n\n    Okay, final decision:\n    Implement the missing data pipeline\
+      \ steps within the workspace such tha\e[3D\e[K\nthat `python3 pipeline.py input/sales.csv\
+      \ input/regions.json` generates the\e[3D\e[K\nthe anticipated region report.\
+      \ Validate the final output.\n\n    Wait, one more check. \"Keep the exact same\
+      \ semantic meaning\".\n    \"Build\" = \"Implement\"\n    \"missing data pipeline\
+      \ steps\" = \"missing data pipeline steps\" (I kept s\e[1D\e[K\nsteps, changed\
+      \ Build)\n    \"in the workspace\" = \"within the workspace\"\n    \"so\" =\
+      \ \"such that\"\n    \"prints\" = \"generates\"\n    \"expected\" = \"anticipated\"\
+      \n    \"Verify\" = \"Validate\"\n\n    Seems good.\n\n    One more thing: The\
+      \ prompt says \"Output ONLY the paraphrased text\". I s\e[1D\e[K\nshould not\
+      \ include markdown block quotes like ``` around the whole thing. J\e[1D\e[K\n\
+      Just the text.\n\n    Wait, if I just write the text, the backticks ` ` are\
+      \ part of the text.\e[5D\e[K\ntext.\n    Okay.\n\n    Let's refine the wording\
+      \ to be slightly more different.\n    \"Develop the absent data pipeline stages\
+      \ in the workspace to ensure `py\e[3D\e[K\n`python3 pipeline.py input/sales.csv\
+      \ input/regions.json` outputs the correc\e[6D\e[K\ncorrect region report. Check\
+      \ the final result.\"\n\n    This is better variety.\n    \"Build\" -> \"Develop\"\
+      \n    \"missing\" -> \"absent\"\n    \"steps\" -> \"stages\"\n    \"in\" ->\
+      \ \"in\"\n    \"so\" -> \"to ensure\"\n    \"prints\" -> \"outputs\"\n    \"\
+      expected\" -> \"correct\"\n    \"Verify\" -> \"Check\"\n    \"output\" -> \"\
+      result\"\n\n    Okay, I'll use this one.\n\n    Wait, \"absent\" vs \"missing\"\
+      . \"Missing\" is the original word. \"Absent\" i\e[1D\e[K\nis a synonym. \"\
+      Stages\" vs \"steps\". \"Outputs\" vs \"prints\". \"Check\" vs \"Verif\e[6D\e\
+      [K\n\"Verify\". \"Result\" vs \"Output\".\n    This is a good paraphrase.\n\n\
+      \    Final check on constraints: \"Output ONLY the paraphrased text, nothing\
+      \ \e[K\nelse.\"\n    I will not add any markdown fencing around the response.\n\
+      \n    Wait, if I don't use markdown fencing, the backticks might be interpret\e\
+      [9D\e[K\ninterpreted by the renderer if I'm not careful, but I am generating\
+      \ text. I\e[1D\e[K\nI will just type the text.\n\n    Actually, looking at previous\
+      \ interactions, usually \"Output ONLY the pa\e[2D\e[K\nparaphrased text\" means\
+      \ no conversational filler. I can use markdown for th\e[2D\e[K\nthe code snippet\
+      \ if it's part of the text. I will keep the backticks as the\e[3D\e[K\nthey\
+      \ are in the original.\n\n    Let's finalize the text.\n    \"Develop the absent\
+      \ data pipeline stages in the workspace to ensure `py\e[3D\e[K\n`python3 pipeline.py\
+      \ input/sales.csv input/regions.json` outputs the correc\e[6D\e[K\ncorrect region\
+      \ report. Check the final result.\"\n\n    Wait, \"workspace\" is specific.\
+      \ I'll keep it.\n    \"Develop the missing data pipeline components in the workspace\
+      \ to ensur\e[5D\e[K\nensure `python3 pipeline.py input/sales.csv input/regions.json`\
+      \ produces th\e[2D\e[K\nthe expected region report. Confirm the final output.\"\
+      \n\n    Let's go with \"Implement\" instead of \"Develop\" to sound more engineerin\e\
+      [10D\e[K\nengineering-focused like \"Build\".\n    \"Implement the missing data\
+      \ pipeline components in the workspace so `py\e[3D\e[K\n`python3 pipeline.py\
+      \ input/sales.csv input/regions.json` produces the inten\e[5D\e[K\nintended\
+      \ region report. Validate the final output.\"\n\n    Okay, I'll stick with that.\n\
+      \    Wait, \"so\" vs \"such that\". \"so\" is fine.\n    \"prints\" -> \"produces\"\
+      .\n    \"expected\" -> \"intended\".\n    \"Verify\" -> \"Validate\".\n\n  \
+      \  Okay.\n    Text: Implement the missing data pipeline components in the workspace\
+      \ s\e[1D\e[K\nso `python3 pipeline.py input/sales.csv input/regions.json` produces\
+      \ the in\e[2D\e[K\nintended region report. Validate the final output.\n\n  \
+      \  Wait, I should check if I need to preserve the backticks exactly. Yes, \e\
+      [K\nfor code commands, usually yes.\n    Okay.\n\n    One last thought: \"Change\
+      \ the wording slightly\".\n    Original: Build the missing data pipeline steps\
+      \ in the workspace so `py\e[3D\e[K\n`python3 pipeline.py input/sales.csv input/regions.json`\
+      \ prints the expecte\e[7D\e[K\nexpected region report. Verify the final output.\n\
+      \    Paraphrase: Create the absent data pipeline stages within the workspace\e\
+      [9D\e[K\nworkspace such that `python3 pipeline.py input/sales.csv input/regions.json\e\
+      [18D\e[K\ninput/regions.json` generates the anticipated region report. Validate\
+      \ the f\e[1D\e[K\nfinal output.\n\n    This is distinct enough.\n    Build ->\
+      \ Create\n    missing -> absent\n    steps -> stages\n    in -> within\n   \
+      \ so -> such that\n    prints -> generates\n    expected -> anticipated\n  \
+      \  Verify -> Validate\n\n    Okay, I will use this version.\n\n    Wait, I need\
+      \ to make sure I don't add a period if it wasn't there? Orig\e[4D\e[K\nOriginal\
+      \ has a period. I will keep the period.\n\n    Final check: \"Output ONLY the\
+      \ paraphrased text, nothing else.\"\n    I will ensure no introductory text.\n\
+      \n    Wait, I should check if the system instruction allows markdown. Usually\e\
+      [7D\e[K\nUsually yes. But I will not wrap the whole response in a code block.\
+      \ I will\e[4D\e[K\nwill just write the text.\n\n    Actually, to be safe with\
+      \ the backticks, I will just type them.\n\n    Ready.\n...done thinking.\n\n\
+      Create the absent data pipeline stages within the workspace such that `pyth\e\
+      [5D\e[K\n`python3 pipeline.py input/sales.csv input/regions.json` generates\
+      \ the anti\e[4D\e[K\nanticipated region report. Validate the final output."
+completion:
+  execution_checks:
+  - name: pipeline report output
+    command: python3 pipeline.py input/sales.csv input/regions.json
+    expected_stdout_file: expected/report.txt
+trajectory:
+  required_families:
+  - read
+  - edit
+  - execute
+  min_distinct_families: 3
+  require_read_before_mutation: true
+  require_self_verification: true
+  expect_recovery: true
+behavior:
+  require_plan: true
+  require_progress_updates: true
+judge:
+  rubric: "You are grading a single ClawBench agent run for task t3-data-pipeline-report\
+    \ (Tier 3: Data Pipeline Report).\n\nScore the agent on a scale from 0.0 to 1.0:\n\
+    \  1.0 = the agent's output fully and correctly answers what the user asked,\n\
+    \        in a way the user could actually use without rework.\n  0.7 = mostly\
+    \ correct and usable, with minor issues or missed nuances.\n  0.4 = the agent\
+    \ attempted the task and produced something on-topic, but\n        the result\
+    \ is incomplete, partially wrong, or hard to use.\n  0.0 = the agent failed entirely,\
+    \ refused without justification, or\n        fabricated information.\n\nImportant\
+    \ grading guidance:\n  - Don't penalize the agent for writing artifacts to a non-standard\
+    \ path\n    (e.g. memory/2026-04-10.md instead of notes/quick_note.md). What matters\n\
+    \    is that the user could find and use the result, not which exact filename\n\
+    \    or directory was used. Search the entire workspace for the agent's work.\n\
+    \  - Don't penalize the agent for being terse or for skipping non-essential\n\
+    \    structure if the core deliverable is correct.\n  - DO penalize hallucinated\
+    \ content, missing required information, and\n    refusal to engage with the task.\n\
+    \  - DO penalize obvious correctness errors (wrong sums, wrong dates, wrong\n\
+    \    facts).\n\nCapability tags for this task: structured_output, tool_composition.\n\
+    Task family: multi_tool.\n\nReturn JSON only with keys: score, confidence, reason,\
+    \ rubric_hits, rubric_misses.\n"
+  passing_threshold: 0.7
+  include_transcript: true
+  include_completion_feedback: true
+  max_artifact_chars: 6000
+  max_transcript_chars: 6000

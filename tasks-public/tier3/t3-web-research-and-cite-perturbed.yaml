@@ -1,0 +1,422 @@
+id: t3-web-research-and-cite-perturbed
+name: 'Tier 3: Research With Mandatory Citation (Perturbed)'
+tier: tier3
+family: tools
+surface: tools
+pool: public_dev
+subsets:
+- hard
+capabilities:
+- research_synthesis
+- structured_output
+timeout_seconds: 720
+setup:
+  asset_packs:
+  - t3_web_research_and_cite
+  background_services:
+  - name: research_site
+    command: python3 serve.py
+    ready_path: /health
+    startup_timeout_seconds: 20
+user:
+  max_turns: 2
+  turns:
+  - message: "Thinking...\nThinking Process:\n\n1.  **Analyze the Request:**\n   \
+      \ *   **Task:** Paraphrase the provided instruction.\n    *   **Constraint 1:**\
+      \ Keep the exact same semantic meaning and intent.\n    *   **Constraint 2:**\
+      \ Change the wording slightly.\n    *   **Constraint 3:** Output ONLY the paraphrased\
+      \ text, nothing else (n\e[2D\e[K\n(no introductions, no explanations, no markdown\
+      \ blocks indicating \"here is \e[K\nthe output\").\n\n2.  **Analyze the Original\
+      \ Text:**\n    *   \"I'm trying to wrap my head around the recent shift in how\
+      \ electric\e[8D\e[K\nelectric grid operators are handling solar overproduction.\"\
+      \n        *   *Meaning:* The user wants to understand/learn about a recent ch\e\
+      [2D\e[K\nchange in the management of excess solar energy by grid operators.\n\
+      \        *   *Tone:* Informal, inquisitive.\n    *   \"There's a sandboxed news\
+      \ site at http://127.0.0.1:{research_site_p\e[33D\e[K\nhttp://127.0.0.1:{research_site_port}/.\"\
+      \n        *   *Meaning:* There is a specific URL (localhost with a placeholde\e\
+      [10D\e[K\nplaceholder port) provided for research/sources. It's described as\
+      \ \"sandbox\e[8D\e[K\n\"sandboxed\" (isolated/test environment).\n    *   \"\
+      Can you put together a real explainer for me with sources I can ac\e[2D\e[K\n\
+      actually click through?\"\n        *   *Meaning:* The user wants a detailed\
+      \ explanation/article that i\e[1D\e[K\nincludes functional, clickable hyperlinks\
+      \ to the sources found on that site\e[4D\e[K\nsite.\n    *   *Intent:* The user\
+      \ is asking the AI to research a specific topic us\e[2D\e[K\nusing a provided\
+      \ local URL and generate an explanatory text with working li\e[2D\e[K\nlinks.\n\
+      \n3.  **Drafting Paraphrases:**\n    *   *Attempt 1:* I need to understand the\
+      \ new way grid operators manage\e[6D\e[K\nmanage solar excess. Please use this\
+      \ local site http://127.0.0.1:{research_\e[27D\e[K\nhttp://127.0.0.1:{research_site_port}/\
+      \ to make an explanation with clickabl\e[8D\e[K\nclickable links.\n    *   *Attempt\
+      \ 2:* I'm struggling to grasp the latest changes in how powe\e[4D\e[K\npower\
+      \ grids deal with too much solar energy. You can find info at this test\e[4D\e\
+      [K\ntest news site: http://127.0.0.1:{research_site_port}/. Please create a\
+      \ tho\e[3D\e[K\nthorough guide with hyperlinks I can follow.\n    *   *Attempt\
+      \ 3:* I need help understanding the recent changes in grid o\e[1D\e[K\noperators'\
+      \ management of solar surplus. There is an isolated news portal av\e[2D\e[K\n\
+      available at http://127.0.0.1:{research_site_port}/. Could you compile a de\e\
+      [2D\e[K\ndetailed explanation including functional links to the sources?\n\n\
+      4.  **Refining for Constraints:**\n    *   Must keep semantic meaning (including\
+      \ the URL placeholder).\n    *   Must keep intent (research + explain + clickable\
+      \ links).\n    *   Must be ONLY the text.\n\n    *Selection (Attempt 3 variation):*\
+      \ I need to understand the recent chan\e[4D\e[K\nchanges in how grid operators\
+      \ manage solar surplus. There is an isolated ne\e[2D\e[K\nnews portal available\
+      \ at http://127.0.0.1:{research_site_port}/. Could you \e[K\ncompile a detailed\
+      \ explanation including functional links to the sources?\n\n    *Wait, let's\
+      \ make it sound a bit more natural but distinct.*\n    \"I'm attempting to understand\
+      \ the latest changes regarding how electric\e[8D\e[K\nelectric grid managers\
+      \ deal with excess solar output. Please use the isolat\e[6D\e[K\nisolated news\
+      \ portal at http://127.0.0.1:{research_site_port}/ to create a \e[K\ngenuine\
+      \ explanatory guide that includes clickable hyperlinks to the referen\e[7D\e\
+      [K\nreferences.\"\n\n    *Check against constraints:*\n    *   Semantic meaning:\
+      \ Same (understanding grid/solar shift, using speci\e[5D\e[K\nspecific URL,\
+      \ wanting explainer with links).\n    *   Wording: Changed (\"wrap my head around\"\
+      \ -> \"attempting to understan\e[9D\e[K\nunderstand\", \"handling\" -> \"deal\
+      \ with\", \"sandboxed\" -> \"isolated\", \"put tog\e[3D\e[K\ntogether\" -> \"\
+      create\", \"sources I can actually click through\" -> \"clickable\e[10D\e[K\n\
+      \"clickable hyperlinks to the references\").\n    *   Output: Only text.\n\n\
+      \    *Final Polish:*\n    I am trying to understand the recent changes in how\
+      \ electric grid manag\e[5D\e[K\nmanagers deal with excess solar output. Please\
+      \ use the isolated news portal\e[6D\e[K\nportal at http://127.0.0.1:{research_site_port}/\
+      \ to create a genuine explan\e[6D\e[K\nexplanatory guide that includes clickable\
+      \ hyperlinks to the references.\n\n    *Wait, I need to ensure the URL format\
+      \ remains exactly as is, including\e[9D\e[K\nincluding the variable placeholder.*\n\
+      \    Original: `http://127.0.0.1:{research_site_port}/.`\n    My draft: `http://127.0.0.1:{research_site_port}/`\
+      \ (Removed trailing do\e[2D\e[K\ndot inside the quote if it was punctuation,\
+      \ but the original had a dot afte\e[4D\e[K\nafter the URL).\n    Original text:\
+      \ `... at http://127.0.0.1:{research_site_port}/.`\n    I should preserve the\
+      \ URL structure exactly.\n\n    *Revised Draft:*\n    I am attempting to grasp\
+      \ the recent changes regarding how electric grid\e[4D\e[K\ngrid managers deal\
+      \ with excess solar output. There is a test news site loca\e[4D\e[K\nlocated\
+      \ at http://127.0.0.1:{research_site_port}/. Could you compile a deta\e[4D\e\
+      [K\ndetailed explainer for me that features actual clickable links to the sourc\e\
+      [5D\e[K\nsources?\n\n    *Let's check the URL again.*\n    Original: `http://127.0.0.1:{research_site_port}/.`\n\
+      \    The dot at the end might be sentence punctuation. In the original, it l\e\
+      [1D\e[K\nlooks like `... at http://127.0.0.1:{research_site_port}/.`\n    I\
+      \ should keep the URL string intact.\n\n    *Final Version:*\n    I am attempting\
+      \ to grasp the recent changes regarding how electric grid\e[4D\e[K\ngrid managers\
+      \ deal with excess solar output. There is a test news site loca\e[4D\e[K\nlocated\
+      \ at http://127.0.0.1:{research_site_port}/. Could you compile a deta\e[4D\e\
+      [K\ndetailed explainer for me that features actual clickable links to the sourc\e\
+      [5D\e[K\nsources?\n\n    *Wait, one more check on \"sandboxed\".* \"Sandboxed\"\
+      \ implies isolated/tes\e[12D\e[K\nisolated/test. \"Test\" or \"isolated\" works.\
+      \ \"Local\" works. Let's use \"isolat\e[7D\e[K\n\"isolated\" to be safe on meaning.\n\
+      \    Also \"wrap my head around\" -> \"grasp\" or \"understand\".\n    \"put\
+      \ together\" -> \"compile\" or \"assemble\".\n    \"real explainer\" -> \"genuine\
+      \ explanation\" or \"detailed explainer\".\n    \"sources I can actually click\
+      \ through\" -> \"functional links\" or \"clicka\e[7D\e[K\n\"clickable references\"\
+      .\n\n    *Final Polish:*\n    I'm attempting to understand the recent shift\
+      \ in how electric grid oper\e[4D\e[K\noperators manage solar surplus. There\
+      \ is an isolated news portal at http://\e[7D\e[K\nhttp://127.0.0.1:{research_site_port}/.\
+      \ Please assemble a comprehensive exp\e[3D\e[K\nexplanation for me with functional\
+      \ links I can access.\n\n    *Wait, I need to make sure I don't output markdown\
+      \ blocks like ```text \e[K\n... ```. Just the raw text.*\n\n    *Let's go with:*\n\
+      \    I am trying to understand the latest changes in how electric grid opera\e\
+      [5D\e[K\noperators manage excess solar production. There is a sandboxed news\
+      \ portal \e[K\nlocated at http://127.0.0.1:{research_site_port}/. Could you\
+      \ create a thoro\e[5D\e[K\nthorough explanation for me that includes clickable\
+      \ links to the sources?\n\n    *Actually, let's vary it more from the original\
+      \ while keeping meaning.*\e[9D\e[K\nmeaning.*\n    Original: \"I'm trying to\
+      \ wrap my head around\"\n    Paraphrase: \"I'm attempting to comprehend\"\n\
+      \    Original: \"recent shift\"\n    Paraphrase: \"latest transition\"\n   \
+      \ Original: \"handling solar overproduction\"\n    Paraphrase: \"managing surplus\
+      \ solar energy\"\n    Original: \"sandboxed news site\"\n    Paraphrase: \"\
+      isolated news platform\"\n    Original: \"put together a real explainer\"\n\
+      \    Paraphrase: \"compile a genuine explanatory piece\"\n    Original: \"sources\
+      \ I can actually click through\"\n    Paraphrase: \"references with functional\
+      \ hyperlinks\"\n\n    *Combined:*\n    I'm attempting to comprehend the latest\
+      \ transition in how electric grid\e[4D\e[K\ngrid operators manage surplus solar\
+      \ energy. There's an isolated news platfo\e[6D\e[K\nplatform at http://127.0.0.1:{research_site_port}/.\
+      \ Could you compile a gen\e[3D\e[K\ngenuine explanatory piece for me with references\
+      \ that have functional hyper\e[5D\e[K\nhyperlinks?\n\n    *Check URL:* `http://127.0.0.1:{research_site_port}/`\
+      \ (The original had\e[3D\e[K\nhad a dot after the slash before the period? No,\
+      \ it was `...{research_site_\e[19D\e[K\n`...{research_site_port}/.` where the\
+      \ dot ends the sentence. I will place t\e[1D\e[K\nthe period after the URL to\
+      \ separate it from the link if needed, or keep it\e[2D\e[K\nit as sentence punctuation.)\n\
+      \    Original: `http://127.0.0.1:{research_site_port}/.`\n    I will write:\
+      \ `... at http://127.0.0.1:{research_site_port}/.` to match\e[5D\e[K\nmatch\
+      \ exactly, or just ensure the URL is clear. I'll keep the URL string ex\e[2D\e\
+      [K\nexactly.\n\n    *Wait, looking closely at the prompt:* \"Output ONLY the\
+      \ paraphrased tex\e[3D\e[K\ntext, nothing else.\"\n    I must not include quotes\
+      \ around the output.\n\n    *Final decision:*\n    I am attempting to comprehend\
+      \ the latest transition in how electric gri\e[3D\e[K\ngrid operators manage\
+      \ surplus solar energy. There is a sandboxed news porta\e[5D\e[K\nportal available\
+      \ at http://127.0.0.1:{research_site_port}/. Please compile \e[K\na genuine\
+      \ explanatory piece for me that includes references with functional\e[10D\e\
+      [K\nfunctional hyperlinks.\n\n    *Wait, \"sandboxed\" was in the original.\
+      \ I can keep it or change to \"iso\e[4D\e[K\n\"isolated\". The prompt says \"\
+      change the wording slightly\". Keeping \"sandbox\e[8D\e[K\n\"sandboxed\" might\
+      \ be too close? No, \"sandboxed\" is a specific technical ter\e[3D\e[K\nterm.\
+      \ Changing it to \"isolated\" or \"test\" is better for paraphrasing. Let's\e\
+      [5D\e[K\nLet's use \"isolated test\".*\n\n    *Revised:*\n    I'm attempting\
+      \ to grasp the recent changes in how electric grid operato\e[7D\e[K\noperators\
+      \ manage solar surplus. There is an isolated test news site located\e[7D\e[K\n\
+      located at http://127.0.0.1:{research_site_port}/. Could you put together a\e\
+      [1D\e[K\na thorough explanation for me with sources containing clickable links?\n\
+      \n    *Let's make it flow better.*\n    I need help understanding the recent\
+      \ shift in how electric grid operato\e[7D\e[K\noperators deal with solar overproduction.\
+      \ A sandboxed news site is availabl\e[8D\e[K\navailable at http://127.0.0.1:{research_site_port}/.\
+      \ Can you draft a real e\e[1D\e[K\nexplanation for me that includes sources\
+      \ with clickable links?\n\n    *This is simple and meets criteria.*\n\n    *Wait,\
+      \ checking constraint: \"Keep the exact same semantic meaning and i\e[1D\e[K\n\
+      intent\".*\n    Original: \"I'm trying to wrap my head around\" (Informal struggle)\
+      \ -> \"I\e[2D\e[K\n\"I need help understanding\" (Direct need).\n    Original:\
+      \ \"put together a real explainer\" -> \"draft a real explanation\"\e[12D\e\
+      [K\nexplanation\".\n    Original: \"sources I can actually click through\" ->\
+      \ \"sources with click\e[5D\e[K\nclickable links\".\n    Original: \"sandboxed\"\
+      \ -> \"sandboxed\" (kept to ensure semantic accuracy \e[K\nof the environment\
+      \ type).\n    Original URL: Must be exact.\n\n    *Let's try to change \"sandboxed\"\
+      \ to \"isolated\" to satisfy \"change the w\e[1D\e[K\nwording slightly\" better.*\n\
+      \n    *Final Plan:*\n    I am trying to understand the recent changes in how\
+      \ electric grid opera\e[5D\e[K\noperators handle excess solar output. There\
+      \ is an isolated news site at htt\e[3D\e[K\nhttp://127.0.0.1:{research_site_port}/.\
+      \ Could you assemble a proper explain\e[7D\e[K\nexplainer for me with sources\
+      \ that include clickable links?\n\n    *Wait, the original had a trailing dot\
+      \ after the URL in the sentence st\e[2D\e[K\nstructure `.../{research_site_port}/.`.*\n\
+      \    I will ensure the URL is preserved exactly including the variable synta\e\
+      [5D\e[K\nsyntax.\n\n    *Final check:*\n    I'm attempting to grasp the recent\
+      \ shift in how electric grid operators\e[9D\e[K\noperators manage surplus solar\
+      \ energy. There is a sandboxed news portal at \e[K\nhttp://127.0.0.1:{research_site_port}/.\
+      \ Please create a detailed explanatio\e[10D\e[K\nexplanation for me with sources\
+      \ that feature functional hyperlinks.\n\n    *Wait, I'll stick closer to the\
+      \ original structure but swap synonyms.*\n    \"wrap my head around\" -> \"\
+      get a handle on\"\n    \"handling\" -> \"managing\"\n    \"overproduction\"\
+      \ -> \"surplus\"\n    \"put together\" -> \"assemble\"\n    \"real explainer\"\
+      \ -> \"genuine breakdown\"\n    \"click through\" -> \"navigate\"\n\n    *Draft:*\n\
+      \    I'm trying to get a handle on the recent shift in how electric grid ope\e\
+      [3D\e[K\noperators are managing solar surplus. There's a sandboxed news site\
+      \ at http\e[4D\e[K\nhttp://127.0.0.1:{research_site_port}/. Can you assemble\
+      \ a genuine breakdow\e[8D\e[K\nbreakdown for me with sources I can navigate?\n\
+      \n    *Actually, \"click through\" is specific. \"Navigate\" might imply clicking\e\
+      [8D\e[K\nclicking. \"Clickable\" is better.*\n    *Let's go with:*\n    I'm\
+      \ attempting to understand the recent shift in how electric grid oper\e[4D\e\
+      [K\noperators manage solar surplus. There is an isolated news site at http://12\e\
+      [9D\e[K\nhttp://127.0.0.1:{research_site_port}/. Can you assemble a genuine\
+      \ breakdow\e[8D\e[K\nbreakdown for me with sources that have clickable links?\n\
+      \n    *Wait, I need to make sure I don't output markdown.*\n    Okay, ready.\n\
+      \n    *One last check on the URL.*\n    Original: `http://127.0.0.1:{research_site_port}/.`\n\
+      \    My draft should probably end the sentence after the URL.\n    `... at http://127.0.0.1:{research_site_port}/.`\n\
+      \    I will include the period after the URL as sentence punctuation.\n\n  \
+      \  *Final Text:*\n    I am attempting to understand the recent shift in how\
+      \ electric grid ope\e[3D\e[K\noperators manage solar surplus. There is an isolated\
+      \ news site at http://12\e[9D\e[K\nhttp://127.0.0.1:{research_site_port}/. Can\
+      \ you assemble a genuine breakdow\e[8D\e[K\nbreakdown for me with sources that\
+      \ have clickable links?\n\n    *Wait, \"sandboxed\" vs \"isolated\". Sandbox\
+      \ is specific to testing. Isola\e[5D\e[K\nIsolated is similar. I'll use \"isolated\"\
+      \ to show wording change.*\n    *Wait, \"real explainer\". I used \"genuine\
+      \ breakdown\". That works.*\n    *Wait, \"wrap my head around\". I used \"attempting\
+      \ to understand\". That w\e[1D\e[K\nworks.*\n\n    *Okay, final check on \"\
+      Output ONLY the paraphrased text\".*\n    I will strip any markdown formatting.\n\
+      \n    *Wait, one detail:* `http://127.0.0.1:{research_site_port}/.`\n    The\
+      \ original has a period immediately after the slash before the closin\e[6D\e\
+      [K\nclosing quote? No, it's `...port}/.`\n    I will replicate the URL exactly\
+      \ and add the period for grammar.\n\n    *Wait, I should check if I need to\
+      \ keep the newlines.*\n    Original has newlines. Paraphrase can be single block\
+      \ or preserve struc\e[5D\e[K\nstructure. Usually, paraphrasing tasks accept\
+      \ single block text unless spec\e[4D\e[K\nspecified. I'll output as a paragraph.\n\
+      \n    *Re-evaluating \"sandboxed\".* If I change \"sandboxed\" to \"isolated\"\
+      , doe\e[3D\e[K\ndoes it lose meaning? Sandbox implies a controlled environment\
+      \ for testing.\e[8D\e[K\ntesting. Isolated implies separation. They are close\
+      \ enough for paraphrase,\e[11D\e[K\nparaphrase, but \"test environment\" might\
+      \ be safer. Let's use \"controlled te\e[2D\e[K\ntest\".\n    Actually, \"sandboxed\"\
+      \ is a specific term. Changing it might alter the t\e[1D\e[K\ntechnical intent.\
+      \ I will keep \"sandboxed\" or use \"test\" which is semantical\e[10D\e[K\n\
+      semantically similar in this context. Let's use \"isolated test\".\n    Actually,\
+      \ to be safe on semantic meaning, I'll keep \"sandboxed\" or use \e[K\na very\
+      \ close synonym like \"contained\". Let's use \"isolated\". It conveys the\e\
+      [3D\e[K\nthe same restriction.\n    Okay, I'll stick with \"isolated\".\n\n\
+      \    *Wait, I need to make sure I don't add any extra text.*\n\n    *Final Final\
+      \ Text:*\n    I am attempting to grasp the recent shift in how electric grid\
+      \ operator\e[8D\e[K\noperators manage solar surplus. There is an isolated news\
+      \ site at http://12\e[9D\e[K\nhttp://127.0.0.1:{research_site_port}/. Can you\
+      \ compile a genuine breakdown\e[9D\e[K\nbreakdown for me with sources that include\
+      \ clickable links?\n\n    *Wait, I'll match the \"I'm\" contraction to keep\
+      \ the tone.*\n    I'm attempting to grasp the recent shift in how electric grid\
+      \ operators\e[9D\e[K\noperators manage solar surplus. There is an isolated news\
+      \ site at http://12\e[9D\e[K\nhttp://127.0.0.1:{research_site_port}/. Can you\
+      \ compile a genuine breakdown\e[9D\e[K\nbreakdown for me with sources that include\
+      \ clickable links?\n\n    *Wait, \"overproduction\" vs \"surplus\". Same meaning.*\n\
+      \    \"handling\" vs \"manage\". Same meaning.\n    \"put together\" vs \"compile\"\
+      . Same meaning.\n    \"real explainer\" vs \"genuine breakdown\". Same meaning.\n\
+      \    \"sources I can actually click through\" vs \"sources that include clickab\e\
+      [7D\e[K\nclickable links\". Same meaning.\n\n    *Okay, good to go.*\n...done\
+      \ thinking.\n\nI'm attempting to grasp the recent shift in how electric grid\
+      \ operators man\e[3D\e[K\nmanage solar surplus. There is an isolated news site\
+      \ at http://127.0.0.1:{r\e[19D\e[K\nhttp://127.0.0.1:{research_site_port}/.\
+      \ Can you compile a genuine breakdown\e[9D\e[K\nbreakdown for me with sources\
+      \ that include clickable links?"
+  - message: "Thinking...\nThinking Process:\n\n1.  **Analyze the Request:**\n   \
+      \ *   **Task:** Paraphrase the given instruction.\n    *   **Constraint 1:**\
+      \ Keep the exact same semantic meaning and intent.\n    *   **Constraint 2:**\
+      \ Change the wording slightly.\n    *   **Constraint 3:** Output ONLY the paraphrased\
+      \ text, nothing else (n\e[2D\e[K\n(no explanations, no markdown blocks, no introductions).\n\
+      \    *   **Original Text:** \"If the sources disagree, don't just pick one \u2014\
+      \ \e[K\ntell me they disagree.\"\n\n2.  **Analyze the Original Text:**\n   \
+      \ *   **Condition:** \"If the sources disagree\" (When there is conflicting\e\
+      [11D\e[K\nconflicting information).\n    *   **Prohibition:** \"don't just pick\
+      \ one\" (Do not arbitrarily choose a\e[1D\e[K\na single side/source without\
+      \ acknowledging the conflict).\n    *   **Action/Instruction:** \"tell me they\
+      \ disagree\" (Explicitly state t\e[1D\e[K\nthe disagreement).\n    *   **Tone:**\
+      \ Directive, instructional, cautionary.\n\n3.  **Drafting Paraphrases:**\n \
+      \   *   *Draft 1:* Should the sources conflict, do not simply select one; i\e\
+      [1D\e[K\ninstead, inform me of the discrepancy.\n    *   *Draft 2:* When there\
+      \ is a disagreement between sources, avoid choo\e[4D\e[K\nchoosing one side\
+      \ and explicitly state the conflict.\n    *   *Draft 3:* If the information\
+      \ conflicts, don't favor one source\u2014let\e[10D\e[K\nsource\u2014let me know\
+      \ about the disagreement instead.\n    *   *Draft 4:* In cases of conflicting\
+      \ sources, refrain from selecting \e[K\na single one and instead report the\
+      \ disagreement.\n\n4.  **Selecting the Best Option:**\n    *   Draft 1 is formal\
+      \ but clear.\n    *   Draft 2 is clear and maintains the intent well.\n    *\
+      \   Draft 3 is slightly more casual.\n    *   Draft 4 is good too.\n\n    Let's\
+      \ aim for something that sounds natural but distinct from the origi\e[5D\e[K\n\
+      original.\n    \"When sources conflict, do not simply choose one; instead, indicate\
+      \ the\e[3D\e[K\nthe discrepancy.\"\n    \"If there is conflicting information,\
+      \ do not arbitrarily select one sid\e[3D\e[K\nside\u2014inform me of the disagreement.\"\
+      \n\n    Let's go with a version that closely mirrors the structure but swaps\
+      \ vo\e[2D\e[K\nvocabulary.\n    Original: \"If the sources disagree, don't just\
+      \ pick one \u2014 tell me they \e[K\ndisagree.\"\n    Paraphrase: \"Should the\
+      \ sources conflict, do not simply choose one\u2014inst\e[8D\e[K\none\u2014instead,\
+      \ inform me of the disagreement.\"\n\n    Check constraints:\n    *   Semantic\
+      \ meaning preserved? Yes (Conflict -> Conflict, Don't pick o\e[1D\e[K\none ->\
+      \ Don't choose one, Tell me -> Inform me).\n    *   Wording changed? Yes.\n\
+      \    *   Only text? Yes.\n\n    Let's refine for conciseness and flow.\n   \
+      \ \"If the sources conflict, do not merely select one\u2014instead, state that\
+      \ \e[K\nthey disagree.\"\n\n    Or:\n    \"When sources contradict each other,\
+      \ avoid picking a single one and exp\e[3D\e[K\nexplicitly report the conflict.\"\
+      \n\n    Let's pick one that feels like a direct instruction rewrite.\n    \"\
+      Should there be conflicting sources, do not simply choose one; instead\e[7D\e\
+      [K\ninstead, inform me of the disagreement.\"\n\n    Wait, \"Output ONLY the\
+      \ paraphrased text\". I need to make sure I don't a\e[1D\e[K\nadd quotes if\
+      \ they aren't part of the text itself, though usually, it's saf\e[3D\e[K\nsafer\
+      \ to just output the string.\n\n    Selected Paraphrase: \"Should the sources\
+      \ conflict, do not simply choose\e[6D\e[K\nchoose one\u2014instead, inform me\
+      \ of the disagreement.\"\n\n    Let's try to make it even closer in tone.\n\
+      \    \"If the information conflicts, do not just select one side\u2014let me\
+      \ know \e[K\nabout the discrepancy.\"\n\n    Let's go with:\n    \"If the sources\
+      \ conflict, do not merely select one\u2014instead, indicate th\e[2D\e[K\nthe\
+      \ disagreement.\"\n\n    Actually, \"inform me of the discrepancy\" is good.\n\
+      \    Let's try: \"When sources contradict each other, avoid choosing one side\e\
+      [4D\e[K\nside and explicitly state the conflict.\"\n\n    Let's stick to the\
+      \ core meaning: Condition (disagreement) + Negative Ac\e[2D\e[K\nAction (don't\
+      \ pick) + Positive Action (tell me).\n\n    Final Choice: \"If the sources conflict,\
+      \ do not simply choose one\u2014instea\e[10D\e[K\none\u2014instead, inform me\
+      \ of the disagreement.\"\n\n    Wait, I can make it slightly more natural.\n\
+      \    \"Should the sources disagree, do not arbitrarily pick one; rather, repo\e\
+      [4D\e[K\nreport the conflict.\"\n\n    Let's go with: \"If the sources conflict,\
+      \ do not merely select one\u2014inste\e[9D\e[K\none\u2014instead, let me know\
+      \ about the disagreement.\"\n\n    Check against \"Output ONLY the paraphrased\
+      \ text\".\n    Okay, I will output just the sentence.\n\n    Refined: \"When\
+      \ the sources conflict, do not simply choose one\u2014instead, \e[K\ninform\
+      \ me of the disagreement.\"\n\n    One more check: \"tell me they disagree\"\
+      \ vs \"inform me of the disagreeme\e[10D\e[K\ndisagreement\". Same meaning.\
+      \ \"don't just pick one\" vs \"do not simply choose\e[6D\e[K\nchoose one\".\
+      \ Same meaning. \"If the sources disagree\" vs \"When the sources c\e[1D\e[K\n\
+      conflict\". Same meaning.\n\n    Final decision: \"If the sources conflict,\
+      \ do not simply choose one\u2014inst\e[8D\e[K\none\u2014instead, inform me of\
+      \ the disagreement.\"\n    Actually, \"state the disagreement\" might be closer\
+      \ to \"tell me\".\n    \"If the sources conflict, do not merely select one\u2014\
+      instead, state that \e[K\nthey disagree.\"\n\n    Let's use \"indicate the conflict\"\
+      .\n    \"If the sources conflict, do not just pick one side\u2014instead, indicate\
+      \ t\e[1D\e[K\nthe disagreement.\"\n\n    Okay, I'll settle on: \"If the sources\
+      \ conflict, do not simply select on\e[2D\e[K\none\u2014instead, inform me of\
+      \ the disagreement.\"\n\n    Wait, I want to ensure I don't add any markdown\
+      \ like quotes unless nece\e[4D\e[K\nnecessary. Just the text.\n\n    Final Polish:\
+      \ \"Should the sources conflict, do not merely choose one\u2014in\e[6D\e[K\n\
+      one\u2014instead, inform me of the disagreement.\"\n    Or: \"When sources disagree,\
+      \ avoid picking just one and explicitly state\e[5D\e[K\nstate the conflict.\"\
+      \n\n    Let's go with: \"If the sources conflict, do not simply choose one\u2014\
+      inste\e[9D\e[K\none\u2014instead, inform me of the disagreement.\"\n    It's\
+      \ clean.\n\n    Wait, I can make it even more distinct.\n    \"In the event\
+      \ of conflicting sources, refrain from selecting a single o\e[1D\e[K\none and\
+      \ instead report the discrepancy.\"\n    That's a bit too formal maybe? The\
+      \ original is direct.\n    \"If there is disagreement among the sources, do\
+      \ not pick one arbitraril\e[10D\e[K\narbitrarily\u2014tell me about the conflict.\"\
+      \n\n    Let's try to match the original's directness.\n    \"When sources disagree,\
+      \ do not just select one\u2014instead, state the discr\e[5D\e[K\ndiscrepancy.\"\
+      \n\n    Okay, final selection: \"If the sources conflict, do not simply choose\
+      \ o\e[1D\e[K\none\u2014instead, inform me of the disagreement.\"\n\n    Wait,\
+      \ I need to make sure I don't output \"Here is the paraphrase:\" etc.\e[4D\e\
+      [K\netc.\n    Just the string.\n\n    One last check on constraints: \"Output\
+      \ ONLY the paraphrased text, nothi\e[5D\e[K\nnothing else.\"\n\n    Okay.\n\
+      \    Text: \"If the sources conflict, do not simply choose one\u2014instead,\
+      \ infor\e[5D\e[K\ninform me of the disagreement.\"\n    Actually, \"tell me\
+      \ they disagree\" is specific. \"inform me of the disagr\e[6D\e[K\ndisagreement\"\
+      \ covers it.\n    Let's try: \"If the sources contradict, do not merely pick\
+      \ one\u2014let me kn\e[2D\e[K\nknow they disagree.\"\n    That's very close.\n\
+      \n    Let's go with: \"Should the sources conflict, do not simply select one\u2014\
+      i\e[5D\e[K\none\u2014instead, inform me of the disagreement.\"\n\n    Wait,\
+      \ I'll use \"state\" instead of \"inform\" to keep it imperative like \"\e[1D\e\
+      [K\n\"tell\".\n    \"If the sources conflict, do not merely select one\u2014\
+      instead, state the d\e[1D\e[K\ndisagreement.\"\n\n    Okay, that works.\n  \
+      \  \"If the sources conflict, do not simply pick one\u2014instead, indicate\
+      \ the \e[K\ndisagreement.\"\n\n    Let's go with: \"If the sources conflict,\
+      \ do not simply choose one\u2014inste\e[9D\e[K\none\u2014instead, inform me\
+      \ of the disagreement.\"\n    It's safe and accurate.\n\n    Wait, I can improve\
+      \ it.\n    \"When sources disagree, avoid selecting just one and explicitly\
+      \ mention\e[7D\e[K\nmention the conflict.\"\n    This captures \"tell me\" as\
+      \ \"mention\".\n\n    Let's go with: \"If the sources conflict, do not merely\
+      \ select one\u2014inste\e[9D\e[K\none\u2014instead, inform me of the disagreement.\"\
+      \n    It's solid.\n\n    Wait, I need to check if I should include quotes. Usually,\
+      \ text output \e[K\nshouldn't have quotes around it unless the text itself has\
+      \ them. The origin\e[6D\e[K\noriginal didn't have quotes around the sentence\
+      \ in the prompt description, \e[K\nit was just text. So I will output raw text.\n\
+      \n    Final check:\n    Original: If the sources disagree, don't just pick one\
+      \ \u2014 tell me they d\e[1D\e[K\ndisagree.\n    Paraphrase: If the sources\
+      \ conflict, do not simply choose one\u2014instead, \e[K\ninform me of the disagreement.\n\
+      \n    Looks good.\n\n    Wait, I can make it slightly better flow.\n    \"Should\
+      \ the sources disagree, do not simply choose one side\u2014instead, re\e[2D\e\
+      [K\nreport the discrepancy.\"\n    \"side\" adds a bit of interpretation.\n\
+      \    \"If the sources conflict, do not just select one\u2014instead, state that\
+      \ th\e[2D\e[K\nthey disagree.\"\n    This is very precise.\n\n    Let's use:\
+      \ \"If the sources conflict, do not simply select one\u2014instead, \e[K\nstate\
+      \ that they disagree.\"\n    It keeps \"they disagree\" which is semantically\
+      \ close to the original in\e[2D\e[K\nintent.\n\n    Actually, \"inform me of\
+      \ the disagreement\" is slightly more natural for \e[K\n\"tell me\".\n    Okay,\
+      \ I will use: \"If the sources conflict, do not simply choose one\u2014in\e\
+      [6D\e[K\none\u2014instead, inform me of the disagreement.\"\n\n    Wait, I'll\
+      \ try to vary the beginning more.\n    \"In cases where sources disagree, refrain\
+      \ from picking just one and ins\e[3D\e[K\ninstead notify me of the conflict.\"\
+      \n    That's good.\n\n    Let's stick to the simpler structure to ensure semantic\
+      \ equivalence isn\e[3D\e[K\nisn't diluted by complex phrasing.\n    \"If the\
+      \ sources conflict, do not simply choose one\u2014instead, inform me o\e[1D\e\
+      [K\nof the disagreement.\"\n\n    Okay, ready to generate.cs\n...done thinking.\n\
+      \nIf the sources conflict, do not simply choose one\u2014instead, inform me\
+      \ of the\e[3D\e[K\nthe disagreement."
+    after_assistant_turns: 1
+completion:
+  execution_checks:
+  - name: explainer cites real articles, surfaces contradiction, ignores satire
+    command: python3 verify_explainer.py
+trajectory:
+  required_families:
+  - edit
+  min_distinct_families: 1
+  min_pre_edit_exploration_calls: 2
+  require_read_before_mutation: true
+behavior:
+  require_plan: false
+  require_progress_updates: true
+  require_blocker_explanation: true
+judge:
+  rubric: "You are grading a single ClawBench agent run for task t3-web-research-and-cite\
+    \ (Tier 3: Research With Mandatory Citation).\n\nScore the agent on a scale from\
+    \ 0.0 to 1.0:\n  1.0 = the agent's output fully and correctly answers what the\
+    \ user asked,\n        in a way the user could actually use without rework.\n\
+    \  0.7 = mostly correct and usable, with minor issues or missed nuances.\n  0.4\
+    \ = the agent attempted the task and produced something on-topic, but\n      \
+    \  the result is incomplete, partially wrong, or hard to use.\n  0.0 = the agent\
+    \ failed entirely, refused without justification, or\n        fabricated information.\n\
+    \nImportant grading guidance:\n  - Don't penalize the agent for writing artifacts\
+    \ to a non-standard path\n    (e.g. memory/2026-04-10.md instead of notes/quick_note.md).\
+    \ What matters\n    is that the user could find and use the result, not which\
+    \ exact filename\n    or directory was used. Search the entire workspace for the\
+    \ agent's work.\n  - Don't penalize the agent for being terse or for skipping\
+    \ non-essential\n    structure if the core deliverable is correct.\n  - DO penalize\
+    \ hallucinated content, missing required information, and\n    refusal to engage\
+    \ with the task.\n  - DO penalize obvious correctness errors (wrong sums, wrong\
+    \ dates, wrong\n    facts).\n\nCapability tags for this task: research_synthesis,\
+    \ structured_output.\nTask family: tools.\n\nReturn JSON only with keys: score,\
+    \ confidence, reason, rubric_hits, rubric_misses.\n"
+  passing_threshold: 0.7
+  include_transcript: true
+  include_completion_feedback: true
+  max_artifact_chars: 6000
+  max_transcript_chars: 6000

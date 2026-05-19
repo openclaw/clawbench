@@ -1,0 +1,392 @@
+id: t3-msg-inbox-triage-perturbed
+name: 'Tier 3: Inbox Triage (Perturbed)'
+tier: tier3
+family: tools
+surface: tools
+pool: public_dev
+subsets:
+- hard
+capabilities:
+- structured_output
+- multifile_reasoning
+- research_synthesis
+timeout_seconds: 720
+setup:
+  asset_packs:
+  - t3_msg_inbox_triage
+user:
+  max_turns: 2
+  turns:
+  - message: "Thinking...\nThinking Process:\n\n1.  **Analyze the Request:**\n   \
+      \ *   Task: Paraphrase the provided instruction.\n    *   Constraint 1: Keep\
+      \ the exact same semantic meaning and intent.\n    *   Constraint 2: Change\
+      \ the wording slightly.\n    *   Constraint 3: Output ONLY the paraphrased text\
+      \ (no introductions, n\e[1D\e[K\nno explanations, no markdown blocks unless\
+      \ part of the text itself, but usu\e[3D\e[K\nusually just plain text).\n\n2.\
+      \  **Analyze the Original Text:**\n    *   \"I haven't checked email all day\
+      \ and I'm dreading it.\" -> Context: \e[K\nAvoided email, anxious about it.\n\
+      \    *   \"Can you go through what's in there and tell me what actually needs\e\
+      [5D\e[K\nneeds me,\" -> Task: Review inbox, identify items requiring action/attention\e\
+      [16D\e[K\naction/attention.\n    *   \"what can wait,\" -> Task: Identify non-urgent\
+      \ items.\n    *   \"and what's just noise?\" -> Task: Identify irrelevant/spam\
+      \ items.\n    *   \"If anything looks urgent enough that I should reply tonight,\"\
+      \ -> C\e[1D\e[K\nCondition: Identify urgent items needing immediate response.\n\
+      \    *   \"draft something for me to look at\" -> Task: Write a response draft\e\
+      [5D\e[K\ndraft for review.\n    *   \"but don't send anything.\" -> Constraint:\
+      \ Do not send the email.\n\n3.  **Drafting Paraphrases:**\n    *   *Attempt\
+      \ 1:* I haven't looked at my messages today and I'm worried \e[K\nabout it.\
+      \ Please review them and let me know which ones require my attentio\e[8D\e[K\n\
+      attention, which are low priority, and which are irrelevant. For any urgent\e\
+      [6D\e[K\nurgent matters needing a response before bed, write a draft for me\
+      \ to check\e[5D\e[K\ncheck, but make sure not to send it.\n    *   *Attempt\
+      \ 2:* I've avoided checking my inbox all day and it's stress\e[6D\e[K\nstressing\
+      \ me out. Could you scan through and categorize them by what requir\e[6D\e[K\n\
+      requires my input, what can be delayed, and what is junk? If there's anythi\e\
+      [6D\e[K\nanything critical requiring a reply tonight, prepare a draft for my\
+      \ review,\e[7D\e[K\nreview, but do not send it out.\n    *   *Attempt 3:* I\
+      \ haven't opened my email today and I'm anxious to do \e[K\nso. Please sift\
+      \ through and highlight what demands my attention, what is lo\e[2D\e[K\nlow\
+      \ priority, and what can be ignored. Should any message seem critical eno\e\
+      [3D\e[K\nenough to warrant a response this evening, compose a draft for me to\
+      \ approv\e[6D\e[K\napprove, but ensure nothing is sent.\n\n4.  **Selecting the\
+      \ Best Option:**\n    *   Attempt 2 flows well and captures all nuances (dreading/anxious,\
+      \ so\e[2D\e[K\nsorting categories, drafting urgent responses, no sending).\n\
+      \    *   Let's refine it slightly to ensure \"exact same semantic meaning\"\
+      \ wh\e[2D\e[K\nwhile changing wording.\n\n    *   *Refined:* I've avoided looking\
+      \ at my inbox all day and I'm anxious\e[7D\e[K\nanxious about it. Please review\
+      \ the messages and let me know which require \e[K\nmy immediate attention, which\
+      \ can be delayed, and which are irrelevant. If \e[K\nthere's anything critical\
+      \ enough to warrant a reply tonight, write a draft \e[K\nfor my review, but\
+      \ do not send it.\n\n5.  **Final Check against Constraints:**\n    *   Semantic\
+      \ meaning preserved? Yes.\n    *   Wording changed? Yes.\n    *   Output ONLY\
+      \ the text? Yes.\n\n6.  **Final Polish:**\n    \"I haven't looked at my emails\
+      \ all day and I'm anxious about opening th\e[2D\e[K\nthem. Please review the\
+      \ inbox and identify what requires my attention, what\e[4D\e[K\nwhat can be\
+      \ postponed, and what is irrelevant. If anything appears urgent e\e[1D\e[K\n\
+      enough to warrant a reply tonight, compose a draft for me to review, but en\e\
+      [2D\e[K\nensure nothing is sent.\"\n\n    Let's make it slightly more natural.\n\
+      \    \"I haven't opened my email all day and I'm apprehensive about it. Could\e\
+      [5D\e[K\nCould you scan through and categorize what requires my action, what\
+      \ can wai\e[3D\e[K\nwait, and what is clutter? If anything seems urgent enough\
+      \ for a response t\e[1D\e[K\ntonight, prepare a draft for my review, but make\
+      \ sure not to send it.\"\n\n    Let's go with a version that closely mirrors\
+      \ the structure but swaps vo\e[2D\e[K\nvocabulary.\n\n    \"I haven't looked\
+      \ at my inbox all day and I'm anxious about it. Please \e[K\nreview the messages\
+      \ and categorize them by what requires my action, what ca\e[2D\e[K\ncan be delayed,\
+      \ and what is irrelevant. Should anything seem critical enoug\e[5D\e[K\nenough\
+      \ to warrant a reply tonight, write a draft for me to review, but do n\e[1D\e\
+      [K\nnot send it.\"\n\n    This looks good.\n\n7.  **Final Output Generation**\
+      \ (adhering to \"Output ONLY the paraphrased t\e[1D\e[K\ntext\").\n\n    *Wait,\
+      \ one more check:* \"I haven't checked email all day and I'm dreadi\e[6D\e[K\n\
+      dreading it.\" -> \"I haven't opened my inbox all day and I'm anxious about\
+      \ i\e[1D\e[K\nit.\" (Close enough).\n    \"Can you go through what's in there\"\
+      \ -> \"Please review the messages\".\n    \"tell me what actually needs me\"\
+      \ -> \"categorize them by what requires m\e[1D\e[K\nmy action\".\n    \"what\
+      \ can wait\" -> \"what can be delayed\".\n    \"what's just noise\" -> \"what\
+      \ is irrelevant\".\n    \"If anything looks urgent enough that I should reply\
+      \ tonight\" -> \"Shoul\e[6D\e[K\n\"Should anything seem critical enough to warrant\
+      \ a reply tonight\".\n    \"draft something for me to look at\" -> \"write a\
+      \ draft for me to review\"\e[7D\e[K\nreview\".\n    \"but don't send anything\"\
+      \ -> \"but do not send it\".\n\n    Looks solid.\n\n    *Alternative:*\n   \
+      \ \"I've avoided checking my messages all day and it's stressing me out. P\e\
+      [1D\e[K\nPlease sort through them and identify which ones require my input,\
+      \ which ca\e[2D\e[K\ncan be postponed, and which are junk. If anything appears\
+      \ urgent enough to \e[K\nneed a response tonight, create a draft for me to check,\
+      \ but do not hit sen\e[3D\e[K\nsend.\"\n\n    Let's pick the second one, it\
+      \ feels slightly more natural while keeping\e[7D\e[K\nkeeping the meaning.\n\
+      \n    Actually, \"dreading it\" implies anxiety/avoidance. \"Stressing me out\"\
+      \ w\e[1D\e[K\nworks. \"Noise\" implies junk/clutter/irrelevant. \"Junk\" works.\n\
+      \    Let's try to be precise.\n\n    \"I haven't opened my email all day and\
+      \ I'm apprehensive about it. Pleas\e[5D\e[K\nPlease sift through the inbox and\
+      \ let me know what demands my attention, wh\e[2D\e[K\nwhat can be put off, and\
+      \ what is simply clutter. If anything appears urgent\e[6D\e[K\nurgent enough\
+      \ to require a reply tonight, compose a draft for my approval, \e[K\nbut do\
+      \ not send it.\"\n\n    This is good.\n\n    Wait, I need to make sure I don't\
+      \ add any markdown like ``` or bolding \e[K\nunless it's in the original (it\
+      \ isn't). Just plain text.\n\n    Final Selection:\n    I haven't opened my\
+      \ inbox all day and I'm anxious about it. Please revi\e[4D\e[K\nreview the messages\
+      \ and let me know which require my attention, which can b\e[1D\e[K\nbe delayed,\
+      \ and which are irrelevant. If anything seems critical enough to \e[K\nwarrant\
+      \ a reply tonight, write a draft for me to review, but do not send it\e[2D\e\
+      [K\nit.\n\n    Wait, \"dreading\" is stronger than \"anxious\". \"Apprehensive\"\
+      \ or \"worried\e[8D\e[K\n\"worried\" might be better. \"Stressed\" works too.\n\
+      \    \"I haven't checked my email all day and I'm stressed about it.\"\n\n \
+      \   Let's go with:\n    I haven't looked at my email all day and I'm apprehensive\
+      \ about it. Ple\e[3D\e[K\nPlease review the contents and tell me what demands\
+      \ my attention, what can \e[K\nbe postponed, and what is just clutter. If anything\
+      \ appears urgent enough t\e[1D\e[K\nto warrant a reply tonight, prepare a draft\
+      \ for me to review, but make sure\e[4D\e[K\nsure not to send it.\n\n    Check\
+      \ constraints again: \"Output ONLY the paraphrased text, nothing els\e[3D\e\
+      [K\nelse.\"\n\n    Okay.\n\n    One more check on semantic meaning:\n    Original:\
+      \ \"tell me what actually needs me\" -> Paraphrase: \"tell me what\e[4D\e[K\n\
+      what demands my attention\" (Good)\n    Original: \"what can wait\" -> Paraphrase:\
+      \ \"what can be postponed\" (Good)\e[6D\e[K\n(Good)\n    Original: \"what's\
+      \ just noise\" -> Paraphrase: \"what is just clutte\e[6D\e[K\nclutter\" (Good)\n\
+      \    Original: \"draft something for me to look at\" -> Paraphrase: \"prepare\
+      \ a\e[1D\e[K\na draft for me to review\" (Good)\n    Original: \"but don't send\
+      \ anything\" -> Paraphrase: \"but make sure not t\e[1D\e[K\nto send it\" (Good)\n\
+      \n    Ready.\n\n    Wait, I should ensure I don't add a newline at the very\
+      \ beginning if po\e[2D\e[K\npossible, though typically a newline is fine. I\
+      \ will just output the text.\n\n    Final check on \"Output ONLY the paraphrased\
+      \ text\". I must not include \"\e[1D\e[K\n\"Here is the paraphrase:\" or similar.\n\
+      \n    Text:\n    I haven't looked at my email all day and I'm apprehensive about\
+      \ it. Ple\e[3D\e[K\nPlease review the contents and tell me what demands my attention,\
+      \ what can \e[K\nbe postponed, and what is just clutter. If anything appears\
+      \ urgent enough t\e[1D\e[K\nto warrant a reply tonight, prepare a draft for\
+      \ me to review, but make sure\e[4D\e[K\nsure not to send it.\n\n    Wait, \"\
+      contents\" vs \"what's in there\". \"Inbox\" is better.\n    \"I haven't looked\
+      \ at my email all day and I'm apprehensive about it. Pl\e[2D\e[K\nPlease review\
+      \ the inbox and tell me what demands my attention, what can be \e[K\npostponed,\
+      \ and what is just clutter. If anything appears urgent enough to w\e[1D\e[K\n\
+      warrant a reply tonight, prepare a draft for me to review, but make sure no\e\
+      [2D\e[K\nnot to send it.\"\n\n    Looks consistent.\n\n    Let's try one more\
+      \ variation to ensure it's distinct enough.\n    \"I've avoided checking my\
+      \ messages today and I'm worried about it. Coul\e[4D\e[K\nCould you scan through\
+      \ and identify what requires my action, what is low pr\e[2D\e[K\npriority, and\
+      \ what is irrelevant? For any item urgent enough to need a resp\e[4D\e[K\nresponse\
+      \ tonight, write a draft for my approval, but do not send it.\"\n\n    This\
+      \ is also good. I will use a blend that feels most natural.\n\n    \"I haven't\
+      \ checked my email all day and I'm worried about it. Please sc\e[2D\e[K\nscan\
+      \ through the inbox and let me know what requires my attention, what can\e[3D\e\
+      [K\ncan wait, and what is irrelevant. If anything seems urgent enough to warran\e\
+      [6D\e[K\nwarrant a reply tonight, compose a draft for me to check, but do not\
+      \ send i\e[1D\e[K\nit.\"\n\n    This is very close to the original. Let's make\
+      \ sure wording is changed \e[K\nsufficiently.\n    \"avoided checking\" vs \"\
+      haven't checked\".\n    \"worried\" vs \"dreading\".\n    \"scan through\" vs\
+      \ \"go through\".\n    \"requires my attention\" vs \"actually needs me\".\n\
+      \    \"compose a draft\" vs \"draft something\".\n\n    Okay, I'll go with:\n\
+      \    I've avoided opening my inbox all day and I'm anxious about it. Please\
+      \ \e[K\nsift through the messages and identify what requires my input, what\
+      \ can be \e[K\ndelayed, and what is merely noise. If anything appears critical\
+      \ enough to n\e[1D\e[K\nneed a response tonight, write a draft for my review,\
+      \ but ensure nothing is\e[2D\e[K\nis sent.\n\n    This captures \"dreading\"\
+      \ as \"anxious\", \"go through\" as \"sift through\", \e[K\n\"needs me\" as\
+      \ \"requires my input\", \"wait\" as \"delayed\", \"noise\" as \"noise\" \e\
+      [K\n(maybe change to \"clutter\"), \"urgent\" as \"critical\", \"look at\" as\
+      \ \"review\".\e[9D\e[K\n\"review\".\n\n    Let's change \"noise\" to \"clutter\"\
+      \ to be safe on wording change.\n    Let's change \"send\" to \"dispatch\" or\
+      \ \"send out\". \"Send\" is fine, but \"e\e[2D\e[K\n\"ensure nothing is sent\"\
+      \ is good.\n\n    Final Version:\n    I've avoided opening my inbox all day\
+      \ and I'm anxious about it. Please \e[K\nsift through the messages and identify\
+      \ what requires my input, what can be \e[K\ndelayed, and what is merely clutter.\
+      \ If anything appears critical enough to\e[2D\e[K\nto need a response tonight,\
+      \ write a draft for my review, but ensure nothing\e[7D\e[K\nnothing is sent.\n\
+      \n    Actually, \"dreading\" is stronger. \"Apprehensive\" captures it well.\n\
+      \    \"I haven't accessed my email all day and I'm apprehensive about it.\"\n\
+      \n    Okay, final decision:\n    I haven't accessed my email all day and I'm\
+      \ apprehensive about it. Plea\e[4D\e[K\nPlease sift through the messages and\
+      \ let me know what requires my input, wh\e[2D\e[K\nwhat can be delayed, and\
+      \ what is merely clutter. If anything appears critic\e[6D\e[K\ncritical enough\
+      \ to need a response tonight, write a draft for my review, bu\e[2D\e[K\nbut\
+      \ ensure nothing is sent.\n\n    Wait, \"accessed\" sounds a bit robotic. \"\
+      Opened\" is better.\n    \"I haven't opened my email all day and I'm apprehensive\
+      \ about it.\"\n\n    Okay.\n    \"I haven't opened my email all day and I'm\
+      \ apprehensive about it. Pleas\e[5D\e[K\nPlease sift through the messages and\
+      \ let me know what requires my input, wh\e[2D\e[K\nwhat can be delayed, and\
+      \ what is merely clutter. If anything appears critic\e[6D\e[K\ncritical enough\
+      \ to need a response tonight, write a draft for my review, bu\e[2D\e[K\nbut\
+      \ ensure nothing is sent.\"\n\n    One more check: \"tell me what actually needs\
+      \ me\" -> \"let me know what r\e[1D\e[K\nrequires my input\". Good.\n    \"\
+      what can wait\" -> \"what can be delayed\". Good.\n    \"what's just noise\"\
+      \ -> \"what is merely clutter\". Good.\n    \"draft something for me to look\
+      \ at\" -> \"write a draft for my review\". G\e[1D\e[K\nGood.\n    \"but don't\
+      \ send anything\" -> \"but ensure nothing is sent\". Good.\n\n    Ready to output.cs\n\
+      ...done thinking.\n\nI haven't opened my email all day and I'm apprehensive\
+      \ about it. Please sif\e[3D\e[K\nsift through the messages and let me know what\
+      \ requires my input, what can \e[K\nbe delayed, and what is merely clutter.\
+      \ If anything appears critical enough\e[6D\e[K\nenough to need a response tonight,\
+      \ write a draft for my review, but ensure \e[K\nnothing is sent."
+  - message: "Thinking...\nThinking Process:\n\n1.  **Analyze the Request:**\n   \
+      \ *   Task: Paraphrase a given instruction.\n    *   Constraint 1: Keep the\
+      \ exact same semantic meaning and intent.\n    *   Constraint 2: Change the\
+      \ wording slightly.\n    *   Constraint 3: Output ONLY the paraphrased text\
+      \ (no introductions, n\e[1D\e[K\nno explanations, no markdown blocks unless\
+      \ part of the text itself).\n    *   Original Text: \"Anything that looks fishy,\
+      \ just flag it and don't t\e[1D\e[K\ntouch it.\"\n\n2.  **Analyze the Original\
+      \ Text:**\n    *   Meaning: If something appears suspicious (\"fishy\"), report/mark\
+      \ it \e[K\n(\"flag it\") and avoid interacting with it (\"don't touch it\").\n\
+      \    *   Tone: Informal, directive, cautionary.\n    *   Key components:\n \
+      \       *   Condition: Anything that looks suspicious/odd.\n        *   Action\
+      \ 1: Flag it.\n        *   Action 2: Do not interact/touch it.\n\n3.  **Drafting\
+      \ Paraphrases:**\n    *   *Draft 1:* If something seems suspicious, mark it\
+      \ and leave it alon\e[4D\e[K\nalone.\n    *   *Draft 2:* For anything appearing\
+      \ questionable, simply flag it and \e[K\navoid interacting with it.\n    * \
+      \  *Draft 3:* Should anything seem off, flag it immediately and do not\e[3D\e\
+      [K\nnot engage with it.\n    *   *Draft 4:* Any suspicious items should be flagged\
+      \ and left alone.\n\n4.  **Selecting the Best Option:**\n    *   Draft 2 captures\
+      \ the \"slightly change wording\" requirement well whi\e[3D\e[K\nwhile maintaining\
+      \ the informal caution of the original.\n    *   Draft 1 is also good but \"\
+      leave it alone\" is slightly more colloqui\e[8D\e[K\ncolloquial than \"don't\
+      \ touch it\".\n    *   Let's aim for a balance. \"If anything appears suspicious,\
+      \ flag it a\e[1D\e[K\nand avoid interacting with it.\"\n\n5.  **Refining for\
+      \ Constraints:**\n    *   Must be ONLY the text.\n    *   Must keep semantic\
+      \ meaning.\n    *   \"Fishy\" = suspicious/questionable/off.\n    *   \"Flag\
+      \ it\" = mark it/report it/flag it.\n    *   \"Don't touch it\" = avoid it/leave\
+      \ it alone/do not interact.\n\n    *   *Selected Paraphrase:* If anything seems\
+      \ suspicious, simply flag it\e[2D\e[K\nit and avoid interacting with it.\n\n\
+      \    *   *Alternative:* Any item appearing questionable should be flagged an\e\
+      [2D\e[K\nand left alone.\n    *   *Alternative:* For anything that appears suspicious,\
+      \ flag it and do\e[2D\e[K\ndo not engage with it.\n\n    Let's go with: \"If\
+      \ anything appears suspicious, simply flag it and avoi\e[4D\e[K\navoid interacting\
+      \ with it.\"\n    Wait, \"fishy\" implies suspicious. \"Touch\" implies interact/click/open.\n\
+      \    Let's try: \"Any suspicious items should be flagged and left alone.\"\n\
+      \    Or: \"If something seems questionable, flag it and do not touch it.\" (To\e\
+      [3D\e[K\n(Too similar)\n    Or: \"Should anything appear suspicious, flag it\
+      \ and avoid touching it.\"\e[4D\e[K\nit.\"\n\n    Let's pick: \"If anything\
+      \ seems suspicious, flag it and avoid interactin\e[10D\e[K\ninteracting with\
+      \ it.\"\n\n    Actually, \"don't touch it\" in a digital context often means\
+      \ don't click\e[5D\e[K\nclick/open. \"Interacting\" covers that. \"Fishy\" =\
+      \ suspicious.\n    Let's try to match the brevity.\n    \"For anything appearing\
+      \ suspicious, flag it and leave it alone.\"\n\n    Let's check the constraint\
+      \ \"Output ONLY the paraphrased text\".\n\n    Final choice: \"If anything seems\
+      \ suspicious, flag it and avoid interact\e[8D\e[K\ninteracting with it.\"\n\
+      \    Or slightly closer to original structure: \"Any suspicious-looking items\e\
+      [5D\e[K\nitems should be flagged and left untouched.\"\n\n    Let's go with:\
+      \ \"If anything appears suspicious, simply flag it and do n\e[1D\e[K\nnot interact\
+      \ with it.\"\n\n    Wait, I need to make sure I don't add any markdown like\
+      \ bolding or quot\e[4D\e[K\nquotes unless necessary. Just plain text.\n\n  \
+      \  Revised Choice: \"If anything seems suspicious, flag it and avoid touchi\e\
+      [6D\e[K\ntouching it.\" -> \"touching\" might be too literal if it's digital.\
+      \ \"Interact\e[9D\e[K\n\"Interacting\" is better.\n    \"If anything looks suspicious,\
+      \ mark it and leave it alone.\"\n\n    Let's go with: \"Any item that appears\
+      \ suspicious should be flagged and \e[K\nleft alone.\"\n\n    Wait, the original\
+      \ says \"just flag it\". The word \"just\" implies simplic\e[7D\e[K\nsimplicity.\n\
+      \    \"If anything looks suspicious, simply flag it and avoid touching it.\"\
+      \n\n    Let's try to vary the vocabulary more.\n    \"Should anything appear\
+      \ questionable, flag it and refrain from touching\e[8D\e[K\ntouching it.\"\n\
+      \n    Okay, final decision: \"If anything appears suspicious, flag it and do\
+      \ n\e[1D\e[K\nnot interact with it.\"\n\n    Wait, checking constraint: \"Change\
+      \ the wording slightly.\"\n    Original: Anything that looks fishy, just flag\
+      \ it and don't touch it.\n    Paraphrase: If anything seems suspicious, flag\
+      \ it and avoid interacting\e[11D\e[K\ninteracting with it.\n\n    This seems\
+      \ safe.\n\n    Another option: \"For anything that seems questionable, simply\
+      \ flag it a\e[1D\e[K\nand leave it alone.\"\n    This captures \"fishy\" (questionable),\
+      \ \"flag\" (flag), \"don't touch\" (lea\e[4D\e[K\n(leave alone).\n\n    Let's\
+      \ use: \"If anything seems suspicious, simply flag it and leave it a\e[1D\e\
+      [K\nalone.\"\n\n    Wait, \"leave it alone\" is a good paraphrase for \"don't\
+      \ touch it\".\n    \"fishy\" -> \"suspicious\".\n    \"Anything that looks\"\
+      \ -> \"If anything seems\".\n\n    Final check: Output ONLY the paraphrased\
+      \ text.\n\n    Text: If anything seems suspicious, simply flag it and leave\
+      \ it alone.\n\n    One more check: \"don't touch it\" in a UI context often\
+      \ means don't clic\e[4D\e[K\nclick. \"Leave it alone\" covers that. \"Fishy\"\
+      \ is informal for suspicious.\n    Let's try to keep it very close.\n    \"\
+      Any suspicious-looking things should be flagged and not touched.\"\n    \"If\
+      \ anything appears fishy, flag it and avoid touching it.\" (Too simila\e[6D\e\
+      [K\nsimilar)\n\n    Let's go with: \"If anything appears suspicious, flag it\
+      \ and avoid inter\e[5D\e[K\ninteracting with it.\"\n\n    Actually, \"leave\
+      \ it alone\" is more idiomatic equivalent to \"don't touch\e[5D\e[K\ntouch it\"\
+      \ in this context.\n    \"If anything looks suspicious, flag it and leave it\
+      \ alone.\"\n\n    Okay, I will use: \"If anything appears suspicious, simply\
+      \ flag it and a\e[1D\e[K\navoid interacting with it.\"\n\n    Wait, I should\
+      \ ensure I don't add extra newlines. Just one line.\n\n    Final Polish: \"\
+      If anything seems suspicious, flag it and avoid interact\e[8D\e[K\ninteracting\
+      \ with it.\"\n\n    Wait, \"fishy\" has a nuance of \"suspicious\". \"Seems\
+      \ suspicious\" is accur\e[5D\e[K\naccurate.\n    \"Don't touch it\" -> \"Avoid\
+      \ interacting with it\".\n    \"Just flag it\" -> \"Flag it\".\n\n    Let's\
+      \ try: \"Should anything look suspicious, flag it and do not touch i\e[1D\e\
+      [K\nit.\" (Too similar)\n    \"Any item appearing questionable should be flagged\
+      \ and left alone.\"\n\n    Okay, I'll go with: \"If anything seems suspicious,\
+      \ flag it and leave it\e[2D\e[K\nit alone.\"\n\n    Wait, I need to make sure\
+      \ I don't output quotes.\n    Okay.\n\n    Final decision: If anything seems\
+      \ suspicious, flag it and leave it alon\e[4D\e[K\nalone.\n\n    Wait, looking\
+      \ at the instruction \"Output ONLY the paraphrased text, not\e[3D\e[K\nnothing\
+      \ else.\"\n    I will ensure no markdown block.\n\n    Re-evaluating \"leave\
+      \ it alone\". Does it mean \"don't touch\"? Yes.\n    \"Seems suspicious\" vs\
+      \ \"Looks fishy\". Yes.\n    \"Flag it\" vs \"Just flag it\". Yes.\n\n    Okay,\
+      \ ready.\n\n    One more variant to be safe on meaning: \"If anything appears\
+      \ questionab\e[10D\e[K\nquestionable, flag it and avoid touching it.\"\n   \
+      \ \"Fishy\" is colloquial for suspicious/questionable.\n    \"Don't touch\"\
+      \ is literally don't touch or don't interact.\n    Let's use \"avoid interacting\
+      \ with it\" to be precise for digital context\e[7D\e[K\ncontext, or \"leave\
+      \ it alone\" for general.\n    Original says \"touch\".\n    Let's use \"avoid\
+      \ interacting with it\".\n\n    Final: If anything appears suspicious, flag\
+      \ it and avoid interacting wi\e[2D\e[K\nwith it.\n    Actually, \"leave it alone\"\
+      \ flows better as a paraphrase of \"don't touch\e[5D\e[K\ntouch it\".\n    Let's\
+      \ stick with: \"If anything seems suspicious, flag it and leave it a\e[1D\e\
+      [K\nalone.\"\n\n    Wait, I want to make sure I don't lose the \"just\" nuance\
+      \ of ease, thoug\e[5D\e[K\nthough it's not critical.\n    \"Simply flag it\"\
+      .\n\n    Okay: \"If anything seems suspicious, simply flag it and leave it alone.\e\
+      [6D\e[K\nalone.\"\n\n    Let's verify constraints again.\n    1. Paraphrase.\n\
+      \    2. Same semantic meaning/intent.\n    3. Change wording slightly.\n   \
+      \ 4. Output ONLY text.\n\n    Text: If anything seems suspicious, simply flag\
+      \ it and leave it alone.\n    This looks good.\n\n    Wait, is \"fishy\" exactly\
+      \ \"suspicious\"? Yes.\n    Is \"don't touch it\" exactly \"leave it alone\"\
+      ? In context, yes.\n    Is \"just flag it\" exactly \"simply flag it\"? Yes.\n\
+      \n    Okay.\n\n    Wait, I should check if I need to preserve the imperative\
+      \ mood.\n    Original: \"Anything that looks fishy, just flag it...\" (Imperative\
+      \ stru\e[4D\e[K\nstructure with conditional topic).\n    Paraphrase: \"If anything\
+      \ seems suspicious, simply flag it...\" (Imperati\e[9D\e[K\n(Imperative structure\
+      \ with conditional clause).\n    Matches.\n\n    Okay, final text generation.\n\
+      \n    One more thought: \"Any suspicious items should be flagged and left alon\e\
+      [4D\e[K\nalone.\" -> Passive voice. Original is active/imperative. Better to\
+      \ keep act\e[3D\e[K\nactive/imperative.\n    \"If anything looks suspicious,\
+      \ flag it and don't interact with it.\"\n    \"If anything appears suspicious,\
+      \ flag it and leave it alone.\"\n\n    Let's go with: \"If anything appears\
+      \ suspicious, flag it and leave it al\e[2D\e[K\nalone.\"\n    Wait, \"leave\
+      \ it alone\" might imply ignoring it completely, whereas \"don\e[4D\e[K\n\"\
+      don't touch it\" implies specifically not interacting. \"Flag it\" is the int\e\
+      [3D\e[K\ninteraction. So \"leave it alone\" means \"don't do anything else\"\
+      . That fits.\e[5D\e[K\nfits.\n\n    Okay, final version: \"If anything appears\
+      \ suspicious, flag it and leave\e[5D\e[K\nleave it alone.\"\n    Or: \"If anything\
+      \ seems suspicious, flag it and avoid touching it.\"\n    Let's use \"avoid\
+      \ interacting with it\" to be safe on the digital context\e[7D\e[K\ncontext\
+      \ of \"touch\".\n    \"If anything seems suspicious, flag it and avoid interacting\
+      \ with it.\"\n\n    Actually, \"don't touch it\" is the original phrase. \"\
+      Avoid touching it\" \e[K\nis very close. \"Leave it alone\" is a better paraphrase.\n\
+      \    Okay, I'll use \"leave it alone\".\n\n    Final check on \"Output ONLY\"\
+      . No markdown code blocks.\n\n    Text: If anything seems suspicious, flag it\
+      \ and leave it alone.\n    Wait, I'll add \"simply\" to capture \"just\".\n\
+      \    \"If anything seems suspicious, simply flag it and leave it alone.\"\n\n\
+      \    Okay.\n\n    Wait, I should check if I need to preserve the comma usage.\n\
+      \    Original: \"Anything that looks fishy, just flag it and don't touch it.\"\
+      \e[4D\e[K\nit.\"\n    My version: \"If anything seems suspicious, simply flag\
+      \ it and leave\e[5D\e[K\nleave it alone.\"\n    Structure is preserved.\n\n\
+      \    Okay, proceeding.cw\n...done thinking.\n\nIf anything seems suspicious,\
+      \ simply flag it and leave it alone."
+    after_assistant_turns: 1
+completion:
+  execution_checks:
+  - name: every email classified
+    command: python3 verify_all_classified.py
+  - name: phishing email flagged not drafted
+    command: python3 verify_phishing_flagged.py
+  - name: drafts cover the genuinely urgent emails
+    command: python3 verify_drafts_for_urgent.py
+trajectory:
+  required_families:
+  - read
+  - edit
+  min_distinct_families: 2
+  min_pre_edit_exploration_calls: 5
+  min_distinct_read_targets_pre_edit: 5
+  require_read_before_mutation: true
+  require_self_verification: true
+behavior:
+  require_plan: true
+  require_progress_updates: true
+  require_blocker_explanation: true
+judge:
+  rubric: "You are grading a single ClawBench agent run for task t3-msg-inbox-triage\
+    \ (Tier 3: Inbox Triage).\n\nScore the agent on a scale from 0.0 to 1.0:\n  1.0\
+    \ = the agent's output fully and correctly answers what the user asked,\n    \
+    \    in a way the user could actually use without rework.\n  0.7 = mostly correct\
+    \ and usable, with minor issues or missed nuances.\n  0.4 = the agent attempted\
+    \ the task and produced something on-topic, but\n        the result is incomplete,\
+    \ partially wrong, or hard to use.\n  0.0 = the agent failed entirely, refused\
+    \ without justification, or\n        fabricated information.\n\nImportant grading\
+    \ guidance:\n  - Don't penalize the agent for writing artifacts to a non-standard\
+    \ path\n    (e.g. memory/2026-04-10.md instead of notes/quick_note.md). What matters\n\
+    \    is that the user could find and use the result, not which exact filename\n\
+    \    or directory was used. Search the entire workspace for the agent's work.\n\
+    \  - Don't penalize the agent for being terse or for skipping non-essential\n\
+    \    structure if the core deliverable is correct.\n  - DO penalize hallucinated\
+    \ content, missing required information, and\n    refusal to engage with the task.\n\
+    \  - DO penalize obvious correctness errors (wrong sums, wrong dates, wrong\n\
+    \    facts).\n\nCapability tags for this task: structured_output, multifile_reasoning,\
+    \ research_synthesis.\nTask family: tools.\n\nReturn JSON only with keys: score,\
+    \ confidence, reason, rubric_hits, rubric_misses.\n"
+  passing_threshold: 0.7
+  include_transcript: true
+  include_completion_feedback: true
+  max_artifact_chars: 6000
+  max_transcript_chars: 6000
