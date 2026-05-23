@@ -17,7 +17,7 @@ The **Semantic Spatio-Temporal Dynamics** framework solves this by fusing these 
 Evaluation datasets ($Q$) inherently suffer from distribution shifts compared to true real-world usage ($P$). To correct this, we stratify and reweight the semantic space of tasks.
 
 ### 2.1 NLU/NLI Semantic Clustering
-We embed the natural language instructions of each task $q_i$ using Dense NLU models to capture semantic intent, and employ Natural Language Inference (NLI) to confirm entailment and redundancy. 
+We embed the natural language instructions of each task $q_i$ using Dense NLU models to capture semantic intent, and employ Natural Language Inference (NLI) to confirm entailment and redundancy.
 Using clustering algorithms (e.g., HDBSCAN), we partition the dataset into $K$ distinct functional stratums: $\mathcal{C} = \{C_1, C_2, \dots, C_K\}$.
 
 ### 2.2 Importance Weighting (Radon-Nikodym Derivatives)

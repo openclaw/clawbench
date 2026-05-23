@@ -75,7 +75,15 @@ def main() -> None:
     tier_args = ["--tier", args.tier] if args.tier else []
     scripts_dir = REPO_ROOT / "scripts"
 
-    _run([py, str(scripts_dir / "compute_constraint_index.py"), "--archive-dir", str(archive_dir), "--reports-dir", str(reports_dir), *tier_args])
+    _run([
+        py,
+        str(scripts_dir / "posterior" / "2_compute_constraint_index.py"),
+        "--archive-dir",
+        str(archive_dir),
+        "--reports-dir",
+        str(reports_dir),
+        *tier_args,
+    ])
     _run([py, str(scripts_dir / "classify_regimes.py"), "--archive-dir", str(archive_dir), "--reports-dir", str(reports_dir), *tier_args])
     _run([py, str(scripts_dir / "variance_decomp.py"), "--archive-dir", str(archive_dir), "--reports-dir", str(reports_dir), *tier_args])
     _run([py, str(scripts_dir / "survival_analysis.py"), "--archive-dir", str(archive_dir), "--reports-dir", str(reports_dir), *tier_args])

@@ -110,37 +110,37 @@ def participation_ratio(X: np.ndarray) -> float:
 
 def response_entropy(X: np.ndarray) -> float:
     """Kernelized continuous entropy (von Neumann entropy of the regularized RBF kernel matrix).
-    
+
     This is highly robust for dense semantic embeddings where N_samples << D_dimensions,
     unlike standard PCA covariance eigenspectrums which collapse.
     """
     n_samples = X.shape[0]
     if n_samples < 2:
         return 0.0
-        
+
     # Pairwise squared distances
     diffs = X[:, np.newaxis, :] - X[np.newaxis, :, :]
     sq_dists = np.sum(diffs ** 2, axis=-1)
-    
+
     # Bandwidth heuristic (sigma) using median distance
     median_sq_dist = np.median(sq_dists)
     if median_sq_dist < 1e-12:
         # Trajectories are perfectly identical (zero variance)
         return 0.0
-        
+
     # RBF Kernel matrix construction
     K = np.exp(-sq_dists / (2.0 * median_sq_dist))
-    
+
     # Tikhonov regularization for numerical stability
     K = K + np.eye(n_samples) * 1e-6
-    
+
     # Normalize trace to 1 to form a valid density matrix
     A = K / np.trace(K)
-    
+
     # Eigendecomposition of the symmetric kernel density matrix
     eigs = np.linalg.eigvalsh(A)
     eigs = np.clip(eigs, 1e-12, None)
-    
+
     # Von Neumann entropy in bits
     return float(-np.sum(eigs * np.log2(eigs)))
 
@@ -208,7 +208,7 @@ def main() -> None:
         raise SystemExit("No usable text found in cached transcripts.")
 
     per_task: dict[str, dict[str, float | str]] = {}
-    
+
     if args.embedding_model.lower() == "bag-of-words":
         vocab = build_vocab(all_texts, top_k=500)
         for task_id, texts in sorted(per_task_texts.items()):
@@ -250,16 +250,16 @@ def main() -> None:
         print(f"Loading sentence-transformers embedding model: {args.embedding_model}...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
         embedder = SentenceTransformer(args.embedding_model, device=device)
-        
+
         for task_id, texts in sorted(per_task_texts.items()):
             X = embedder.encode(texts, show_progress_bar=False)
             # Normalize embeddings to unit length for cosine similarity calculations downstream
             norms = np.linalg.norm(X, axis=1, keepdims=True)
             X = np.divide(X, norms, out=np.zeros_like(X), where=norms!=0)
-            
+
             pr = participation_ratio(X)
             ent = response_entropy(X)
-            
+
             # Sentence embeddings are dense, so discrete info-loss is not strictly valid in the same way.
             # We set Lagrangian bound to 0.0 for dense semantic spaces.
             lagrangian_bound = 0.0
@@ -270,7 +270,7 @@ def main() -> None:
                 norms = np.linalg.norm(vecs, axis=1, keepdims=True)
                 vecs = np.divide(vecs, norms, out=np.zeros_like(vecs), where=norms!=0)
                 model_vecs[model_name] = [v for v in vecs]
-                
+
             bops = bops_inter_run_predictability(model_vecs)
             per_task[task_id] = {
                 "n_responses": len(texts),

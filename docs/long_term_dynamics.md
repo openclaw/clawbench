@@ -7,7 +7,7 @@ Long-running LLM-based agents are increasingly used for autonomous planning and 
 
 ## 1. Introduction: The Need for Dynamical Diagnostics
 
-**Key question: what happens if we keep an LLM agent running?** 
+**Key question: what happens if we keep an LLM agent running?**
 
 Large language models (LLMs) are increasingly deployed within long-running reasoning and agentic systems that iteratively plan, reflect, and revise in natural language. In these settings, a model repeatedly conditions on its own outputs, forming an iterative stochastic process whose behavior extends far beyond single-step inference. Despite extensive work on short-horizon accuracy and capability, we lack a principled understanding of the **long-term dynamics** of such systems: whether they converge to stable behaviors, enter cycles, drift semantically, or exhibit sensitivity to small perturbations when constraints weaken.
 
@@ -37,10 +37,10 @@ We construct a controlled prompt set spanning general-purpose vs. domain-specifi
 
 We combine these components (e.g., z-scored weighted sum) into $C(q)$ and retain each component for ablations.
 
-> **Implementation:** Computed in `scripts/compute_constraint_index.py` and powered by `clawbench.dynamics.compute_dynamics`.
+> **Implementation:** Computed in `scripts/posterior/2_compute_constraint_index.py` and powered by `clawbench.dynamics.compute_dynamics`.
 
 ### 2.3 State Representations (Behavioral Action-Space Embeddings)
-At each step, we map text $x_t$ to a semantic state. Rather than relying on dense pre-trained textual NLU embeddings (which can dilute intent), we use a structured **10-dimensional Behavioral Feature Matrix**. 
+At each step, we map text $x_t$ to a semantic state. Rather than relying on dense pre-trained textual NLU embeddings (which can dilute intent), we use a structured **10-dimensional Behavioral Feature Matrix**.
 *   **Embedding space:** Extracted directly from the agent's actions, features include: `[0:6]` proportions of tool-family usage (e.g., `browser`, `execute`, `search`), `[6]` success/error flags, `[7]` normalized token consumption, `[8]` normalized text length, and `[9]` temporal trajectory progress.
 
 We compute uncertainty (logit entropy/self-consistency), drift and step size ($\|e_t-e_1\|$, $\|e_t-e_{t-1}\|$), recurrence (kNN revisits), and distance to an early-step centroid.
@@ -50,7 +50,7 @@ We compute uncertainty (logit entropy/self-consistency), drift and step size ($\
 ### 2.4 Effective Volume and Manifold-Aware Support
 For a window $E=\{e_t\}_{t=1}^T$, we treat "volume" as a proxy for support size/coverage. With empirical covariance $\Sigma$:
 $$ \mathrm{Vol}_{\log}(E) = \log\det(\Sigma + \varepsilon I) $$
-We also estimate intrinsic dimension $\widehat{m}$ and a robust radius $r$ (median kNN distance), yielding $V_{\mathrm{eff}} \propto r^{\widehat{m}}$. 
+We also estimate intrinsic dimension $\widehat{m}$ and a robust radius $r$ (median kNN distance), yielding $V_{\mathrm{eff}} \propto r^{\widehat{m}}$.
 
 > **Implementation:** Computed via covariance matrices within `clawbench.dynamics.compute_dynamics`.
 
@@ -60,7 +60,7 @@ We use the Participation Ratio ($PR$) to mathematically cluster tasks based on t
 *   **Low $PR$ Clusters (Trapped/Convergent)**: Highly constrained tasks with clear checks. The variance is dominated by a few components, showing rapid collapse to a specific path or limit-cycle.
 By calculating the distance between centroids of these clusters in PCA space, we determine if similar tasks converge to the same dynamical basin, and observe how perturbations shift trajectories within or across these clusters.
 
-> **Implementation:** PR values are extracted via `clawbench.dynamics.compute_dynamics` and aggregated in `scripts/compute_constraint_index.py`.
+> **Implementation:** PR values are extracted via `clawbench.dynamics.compute_dynamics` and aggregated in `scripts/posterior/2_compute_constraint_index.py`.
 
 ---
 
@@ -119,7 +119,7 @@ The expected one-step log-loss equals conditional entropy:
 $$ \inf_{\hat p_t}\;\mathbb{E}\bigl[-\log \hat p_t(S_{t+1})\bigr] = H(S_{t+1}\mid S_{1:t}) $$
 Normalized into a predictive probability score (BOPS), it reveals when a process becomes algorithmically predictable. Furthermore, for each step, measuring the entropy of the next action predicted by the model alongside its argmax allows us to bound (via a Lagrangian relaxation) how much information is lost by taking the Bayesian optimal or greedy action.
 
-> **Implementation:** Integrated into the $C(q)$ calculation within `scripts/compute_constraint_index.py`.
+> **Implementation:** Integrated into the $C(q)$ calculation within `scripts/posterior/2_compute_constraint_index.py`.
 
 ### Survival Analysis & Latent-State Markov Models
 Treating failure (e.g., incoherence/runaway) as an absorbing event $T_F$, survival statistics quantify long-term resilience:
@@ -140,7 +140,7 @@ Negative drift ensures stability, while positive drift mathematically aligns wit
 
 The theoretical framework is operationalized through the `run_posterior_dynamics_pipeline.py` script. This pipeline sequentially calls several specialized analysis scripts on the cached execution traces to map the raw behavior onto the dynamical concepts:
 
-*   **`compute_constraint_index.py`**: Computes the task-level Constraint Index $C(q)$. It calculates the PCA Participation Ratio ($PR$), tool-family entropy ($H$), and Bayesian Optimal Prediction Score (BOPS) to quantify how tightly the prompt constraints bind the model's exploration.
+*   **`scripts/posterior/2_compute_constraint_index.py`**: Computes the task-level Constraint Index $C(q)$. It calculates the PCA Participation Ratio ($PR$), tool-family entropy ($H$), and Bayesian Optimal Prediction Score (BOPS) to quantify how tightly the prompt constraints bind the model's exploration.
 *   **`classify_regimes.py`**: Operationalizes the regime signatures. It classifies each individual run into one of the theoretical regimes (`trapped`, `convergent`, `diffusive`, `chaotic`, `limit_cycle`, or `unknown`) using thresholds on entropy, drift variance, and step-size autocovariance.
 *   **`variance_decomp.py`**: Separates performance variance into *seed noise* versus actual *capability signal*. This quantifies the Signal-to-Noise Ratio (SNR) of the task, isolating the dynamical sensitivity to stochasticity from true deterministic performance.
 *   **`survival_analysis.py`**: Implements the latent-state failure modeling. It computes Kaplan-Meier survival curves $S(t)$ and hazard functions $h(t)$, defining "failure" $T_F$ as an absorbing event (like a runaway loop or an unrecoverable `tool_misuse`), plotting model resilience over the turn horizon.
@@ -164,7 +164,7 @@ For LLM Agent Researchers and End-Users, these metrics translate directly to ope
 
 ## 7. Space-Time Decomposition
 
-Our raw time-series metrics treat all tasks in the benchmark equally. However, benchmarks rarely reflect true user workloads. To correct this, we integrate the temporal dynamics computed here with the spatial Task Distribution Reweighting framework. 
+Our raw time-series metrics treat all tasks in the benchmark equally. However, benchmarks rarely reflect true user workloads. To correct this, we integrate the temporal dynamics computed here with the spatial Task Distribution Reweighting framework.
 
 By taking the Radon-Nikodym derivatives (Importance Weights $\rho_i$) representing the true user distribution, we compute the Hajek estimators for all dynamic properties. This **Space-Time Decomposition** yields the expected real-world probability of an agent entering a specific dynamical regime (like a chaotic wandering state) and the debiased expected Constraint Index $C(q)$ under operational conditions.
 
