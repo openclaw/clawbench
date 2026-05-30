@@ -166,6 +166,30 @@ async def test_execution_check_supports_cwd_env_and_expected_json_file(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_execution_check_keeps_rendered_whitespace_values_as_one_argv_arg(tmp_path: Path):
+    script = tmp_path / "check_argv.py"
+    script.write_text(
+        "import json, sys\n"
+        "print(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+
+    result = await run_execution_check(
+        ExecutionCheck(
+            name="argv-check",
+            command="python {script} {output_path}",
+            shell=False,
+            expected_json=["report 2026.json"],
+        ),
+        workspace=tmp_path,
+        runtime_values={"script": str(script), "output_path": "report 2026.json"},
+    )
+
+    assert result.passed is True
+    assert result.reason == "OK"
+
+
+@pytest.mark.asyncio
 async def test_execution_check_rejects_cwd_outside_workspace(tmp_path: Path):
     result = await run_execution_check(
         ExecutionCheck(
