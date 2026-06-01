@@ -167,6 +167,18 @@ Each task verifier should be classified as one of:
 
 `semantic` should be the exception, not the default.
 
+### Shell Command Placeholders
+
+Runtime placeholders in `shell: true` execution checks and background
+service commands are literal data by default. Values substituted with
+`{name}` are shell-escaped so whitespace, glob characters, redirects,
+pipes, and other metacharacters are not interpreted as shell syntax.
+
+Task authors who intentionally need a runtime value to expand as a
+shell fragment must opt in at that insertion point with `{name:raw}`.
+Use this only for benchmark-owned fragments, never for agent-produced
+or otherwise untrusted values.
+
 ## Browser Verification
 
 Browser tasks should move closer to WebArena-Verified style evaluation.

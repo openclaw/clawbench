@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 
 PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
+SHELL_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z0-9_]+)(?::(raw))?\}")
 
 
 def _stringify_template_value(value: Any) -> str:
@@ -71,24 +72,27 @@ def _escape_shell_double_quoted(value: str) -> str:
 
 
 def render_shell_template(text: str, values: Mapping[str, Any]) -> str:
-    """Render placeholders as literal shell data without breaking existing quotes."""
+    """Render shell placeholders as literal data, with `{name:raw}` as an escape hatch."""
 
     parts: list[str] = []
     last = 0
-    for match in PLACEHOLDER_RE.finditer(text):
+    for match in SHELL_PLACEHOLDER_RE.finditer(text):
         parts.append(text[last : match.start()])
         key = match.group(1)
         if key not in values:
             parts.append(match.group(0))
         else:
             value = _stringify_template_value(values[key])
-            quote_context = _shell_quote_context(text, match.start())
-            if quote_context == "single":
-                parts.append(_escape_shell_single_quoted(value))
-            elif quote_context == "double":
-                parts.append(_escape_shell_double_quoted(value))
+            if match.group(2) == "raw":
+                parts.append(value)
             else:
-                parts.append(shlex.quote(value))
+                quote_context = _shell_quote_context(text, match.start())
+                if quote_context == "single":
+                    parts.append(_escape_shell_single_quoted(value))
+                elif quote_context == "double":
+                    parts.append(_escape_shell_double_quoted(value))
+                else:
+                    parts.append(shlex.quote(value))
         last = match.end()
     parts.append(text[last:])
     return "".join(parts)

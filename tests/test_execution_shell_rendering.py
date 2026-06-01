@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,36 @@ async def test_shell_execution_check_treats_metacharacters_as_data(
 
     assert result.passed is True
     assert marker.exists() is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run_execution_check", RUNNERS)
+async def test_shell_execution_check_raw_placeholder_allows_shell_fragments(
+    tmp_path: Path,
+    run_execution_check,
+):
+    script = tmp_path / "check_argv.py"
+    script.write_text(
+        "import json, sys\n"
+        "print(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+
+    result = await run_execution_check(
+        ExecutionCheck(
+            name="raw-shell-fragment-check",
+            command="{python_exe} {script} {extra_args:raw}",
+            expected_json=["one", "two"],
+        ),
+        workspace=tmp_path,
+        runtime_values={
+            "python_exe": sys.executable,
+            "script": str(script),
+            "extra_args": "one two",
+        },
+    )
+
+    assert result.passed is True
 
 
 @pytest.mark.asyncio
