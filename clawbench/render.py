@@ -11,6 +11,12 @@ from typing import Any, Mapping
 PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
 
 
+def _stringify_template_value(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return str(value)
+
+
 def render_template(text: str, values: Mapping[str, Any]) -> str:
     """Replace `{name}` placeholders while leaving unrelated braces alone."""
 
@@ -18,12 +24,74 @@ def render_template(text: str, values: Mapping[str, Any]) -> str:
         key = match.group(1)
         if key not in values:
             return match.group(0)
-        value = values[key]
-        if isinstance(value, (dict, list)):
-            return json.dumps(value)
-        return str(value)
+        return _stringify_template_value(values[key])
 
     return PLACEHOLDER_RE.sub(repl, text)
+
+
+def _shell_quote_context(text: str, end: int) -> str | None:
+    quote: str | None = None
+    escaped = False
+
+    for char in text[:end]:
+        if quote == "single":
+            if char == "'":
+                quote = None
+            continue
+
+        if escaped:
+            escaped = False
+            continue
+
+        if char == "\\":
+            escaped = True
+            continue
+
+        if char == "'" and quote is None:
+            quote = "single"
+        elif char == '"' and quote is None:
+            quote = "double"
+        elif char == '"' and quote == "double":
+            quote = None
+
+    return quote
+
+
+def _escape_shell_single_quoted(value: str) -> str:
+    return value.replace("'", "'\\''")
+
+
+def _escape_shell_double_quoted(value: str) -> str:
+    return (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("$", "\\$")
+        .replace("`", "\\`")
+    )
+
+
+def render_shell_template(text: str, values: Mapping[str, Any]) -> str:
+    """Render placeholders as literal shell data without breaking existing quotes."""
+
+    parts: list[str] = []
+    last = 0
+    for match in PLACEHOLDER_RE.finditer(text):
+        parts.append(text[last : match.start()])
+        key = match.group(1)
+        if key not in values:
+            parts.append(match.group(0))
+        else:
+            value = _stringify_template_value(values[key])
+            quote_context = _shell_quote_context(text, match.start())
+            if quote_context == "single":
+                parts.append(_escape_shell_single_quoted(value))
+            elif quote_context == "double":
+                parts.append(_escape_shell_double_quoted(value))
+            else:
+                parts.append(shlex.quote(value))
+        last = match.end()
+    parts.append(text[last:])
+    return "".join(parts)
 
 
 def render_argv_template(text: str, values: Mapping[str, Any]) -> list[str]:
