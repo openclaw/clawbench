@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from typing import Any, Mapping
 
 
@@ -23,6 +24,12 @@ def render_template(text: str, values: Mapping[str, Any]) -> str:
         return str(value)
 
     return PLACEHOLDER_RE.sub(repl, text)
+
+
+def render_argv_template(text: str, values: Mapping[str, Any]) -> list[str]:
+    """Render shell-style argv templates without splitting substituted values."""
+
+    return [render_template(part, values) for part in shlex.split(text)]
 
 
 def render_value(value: Any, values: Mapping[str, Any]) -> Any:

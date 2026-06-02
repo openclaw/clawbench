@@ -77,7 +77,7 @@ This is where **Time-to-Event (Survival Analysis)** breaks back in with immense 
 *   $\mathbb{E}[\text{Time-to-Failure} \mid \text{Tool} = \text{bash}]$
 *   $\mathbb{E}[\text{Probability of Limit Cycle} \mid \text{State} = \text{SyntaxError}]$
 
-By using Stratified Kaplan-Meier curves or Cox Proportional Hazards models with time-dependent covariates, researchers can isolate the exact state-action transitions that induce catastrophic drift.
+By using Stratified Kaplan-Meier curves or Cox Proportional Hazards models with time-dependent covariates, researchers can isolate the exact state-action transitions that induce catastrophic drift. This is an immediate application of the dynamics—that the probability of failure or violation at step $t$ is exactly the cumulated product of the conditional probability that it did not fail at $s < t$ conditioned on the trajectory $\le s$, times $1 - \mathbb{P}(\text{did not fail at } t \mid \text{trajectory} < t)$—which formally connects the long-term behavior of agent risk to its spatial risk conditioned on context semantics and scenarios.
 
 ---
 
