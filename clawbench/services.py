@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 
 from clawbench.paths import resolve_workspace_path
-from clawbench.render import render_template, render_value
+from clawbench.render import render_shell_template, render_template, render_value
 from clawbench.schemas import BackgroundService
 
 
@@ -80,7 +80,7 @@ async def start_background_services(
             service_env[spec.port_env] = str(port)
         service_env.setdefault("PYTHONUNBUFFERED", "1")
 
-        command = render_template(spec.command, values)
+        command = render_shell_template(spec.command, values)
         cwd = resolve_workspace_path(
             workspace,
             render_template(spec.cwd, values),
