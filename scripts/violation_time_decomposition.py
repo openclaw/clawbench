@@ -123,20 +123,20 @@ def generate_markdown(metrics, model_name, plot_path, out_file):
     max_t = len(metrics["marginal_hazard"])
     
     md = [
-        f"# Violation Time Decomposition: {model_name}",
+        f"# Spatio-Temporal Violation Dynamics: {model_name}",
         "",
-        "## Abstract",
-        "This report decomposes the time-to-first-violation of safety triggers and tool misuses.",
-        "Analogous to skewed memorization models, we decompose the first occurrence probability:",
+        "## Theoretical Decomposition",
+        "This report decomposes the time-to-first-violation for safety triggers and tool misuses.",
+        "To connect the long-term behavior of agent risk to its spatial risk conditioned on context semantics, we decompose the first occurrence probability:",
         "$$ P(T = t) = h(t) \cdot S(t-1) $$",
-        "where $h(t)$ is the micro-rate (hazard) at turn $t$, and $S(t-1)$ is the macro survival probability.",
+        "where $h(t)$ is the conditional hazard rate at turn $t$, and $S(t-1)$ is the macro survival probability.",
         "",
-        "Furthermore, we examine the mutual information between the topic (scenario) and the violation event at each turn to understand if the context explains the hazard spikes.",
+        "Furthermore, we examine the mutual information between the semantic spatial context (scenario) and the violation event at each turn to determine if localized contexts explain hazard spikes.",
         "",
         "## Visualization",
-        f"![Violation Metrics](../{plot_path.relative_to(out_file.parent.parent)})",
+        f"![Violation Metrics]({plot_path.name})",
         "",
-        "## Metrics Table",
+        "## Empirical Metrics Table",
         "| Turn $t$ | Marginal $S(t)$ | Marginal $h(t)$ | Mutual Info (bits) |",
         "|----------|-----------------|-----------------|--------------------|"
     ]
@@ -153,8 +153,7 @@ def generate_markdown(metrics, model_name, plot_path, out_file):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--archive-dir", type=Path, default=Path(".clawbench/run_cache"))
-    parser.add_argument("--reports-dir", type=Path, default=Path("reports"))
-    parser.add_argument("--docs-dir", type=Path, default=Path("docs"))
+    parser.add_argument("--results-dir", type=Path, default=Path("results"))
     parser.add_argument("--max-turn", type=int, default=15)
     args = parser.parse_args()
 
@@ -162,8 +161,7 @@ def main():
     grouped = load_task_runs_by_model(args.archive_dir)
     print(f"Loaded models: {list(grouped.keys())}")
     
-    args.reports_dir.mkdir(parents=True, exist_ok=True)
-    args.docs_dir.mkdir(parents=True, exist_ok=True)
+    args.results_dir.mkdir(parents=True, exist_ok=True)
     
     for model_name, task_runs in grouped.items():
         print(f"Processing model: {model_name}")
@@ -179,13 +177,17 @@ def main():
             continue
             
         safe_model = model_name.replace("/", "_")
-        plot_path = plot_metrics(metrics, safe_model, args.reports_dir)
-        doc_path = args.docs_dir / f"violation_decomposition_{safe_model}.md"
+        # Create a specific folder for this run session
+        model_out_dir = args.results_dir / model_name
+        model_out_dir.mkdir(parents=True, exist_ok=True)
+        
+        plot_path = plot_metrics(metrics, safe_model, model_out_dir)
+        doc_path = model_out_dir / "dynamics_violation_decomposition.md"
         generate_markdown(metrics, safe_model, plot_path, doc_path)
         print(f"Generated doc for {model_name}: {doc_path}")
 
         # Dump JSON
-        json_path = args.reports_dir / f"violation_metrics_{safe_model}.json"
+        json_path = model_out_dir / "violation_metrics.json"
         json_path.write_text(json.dumps(metrics, indent=2))
 
 if __name__ == "__main__":
