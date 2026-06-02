@@ -49,16 +49,16 @@ def main():
     # Build Table
     table_rows = []
     task_scores = {t["task_id"]: t["mean_task_score"] for t in eval_data.get("task_results", [])}
-    
+
     # Merge tasks from both
     all_tasks = set(task_scores.keys()).union(set(constraint_data.keys()))
-    
+
     for task_id in sorted(all_tasks):
         score = task_scores.get(task_id, 0.0)
         c_q = constraint_data.get(task_id, {}).get("C_q", 0.0)
         lagrangian = constraint_data.get(task_id, {}).get("lagrangian_info_loss_bound", 0.0)
         pr = constraint_data.get(task_id, {}).get("PR", 0.0)
-        
+
         row = f"| `{task_id}` | {score:.3f} | {c_q:.3f} | {lagrangian:.3f} | {pr:.3f} |"
         table_rows.append(row)
 
@@ -77,17 +77,17 @@ def main():
     results_dir = args.output_dir.parent
     plots_dir = args.output_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
-    
+
     vis_content = "\n## 4. Spatio-Temporal Visualizations\n\n"
     has_vis = False
-    
+
     important_plots = [
         ("PCA Trajectories by Tier", "pca_by_tier.png"),
         ("Pairwise Contraction & Divergence", "pairwise_contraction_scatter.png"),
         ("Prompt Perturbation Sensitivity Heatmap", "sensitivity_heatmap.png"),
         ("Task Completion Survival Curve", "survival_first_correct_write.png")
     ]
-    
+
     for dyn_dir in sorted(results_dir.glob("*_dynamics")):
         if dyn_dir.is_dir():
             model_name = dyn_dir.name.replace("_eval_dynamics", "").replace("_", " ").title()
@@ -98,7 +98,7 @@ def main():
                     dest_name = f"{model_name.replace(' ', '_').lower()}_{filename}"
                     dest_file = plots_dir / dest_name
                     shutil.copy2(plot_file, dest_file)
-                    
+
                     # Use relative paths for markdown links within the self-contained folder
                     vis_content += f"**{title}**\n\n![{title}](plots/{dest_name})\n\n"
                     has_vis = True
@@ -170,7 +170,7 @@ of agents deployed in long-horizon autonomous settings.
     output_md = args.output_dir / "EVAL_REPORT_SPACE_TIME.md"
     with open(output_md, "w") as f:
         f.write(report_content)
-    
+
     print(f"Generated Space-Time Report at: {output_md}")
 
 if __name__ == "__main__":

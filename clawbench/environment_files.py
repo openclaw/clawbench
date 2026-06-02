@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from clawbench.paths import resolve_workspace_path
-from clawbench.render import render_argv_template, render_template, render_value
+from clawbench.render import render_argv_template, render_shell_template, render_template, render_value
 from clawbench.schemas import (
     ExecutionCheck,
     ExecutionCheckResult,
@@ -100,7 +100,11 @@ async def run_execution_check(
 ) -> ExecutionCheckResult:
     """Run a single `ExecutionCheck` subprocess and evaluate its output."""
 
-    rendered_command = render_template(spec.command, runtime_values)
+    rendered_command = (
+        render_shell_template(spec.command, runtime_values)
+        if spec.shell
+        else render_template(spec.command, runtime_values)
+    )
     try:
         rendered_cwd = resolve_workspace_path(
             workspace,

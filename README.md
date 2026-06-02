@@ -23,6 +23,8 @@ license: mit
 
 </div>
 
+![ClawBench banner](docs/assets/readme-banner.jpg)
+
 ---
 
 ## What's new in Core v1 (2026-04-20)

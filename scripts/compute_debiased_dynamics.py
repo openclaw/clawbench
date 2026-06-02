@@ -8,16 +8,16 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 def compute_debiased_dynamics(regimes_path, constraint_path, weights_path, topics_path, output_path):
     """
-    Computes the Horvitz-Thompson / Hajek estimators for the temporal 
-    dynamical properties (Regime Distributions, Constraint Index) 
+    Computes the Horvitz-Thompson / Hajek estimators for the temporal
+    dynamical properties (Regime Distributions, Constraint Index)
     using the Radon-Nikodym derivatives (weights).
     """
     with open(weights_path, 'r') as f:
         weights = json.load(f)
-        
+
     with open(topics_path, 'r') as f:
         topics_data = json.load(f)
-    
+
     # Extract topics
     task_topics = {}
     for task_id, data in topics_data.items():
@@ -29,28 +29,28 @@ def compute_debiased_dynamics(regimes_path, constraint_path, weights_path, topic
     # 1. Debiased Regimes
     with open(regimes_path, 'r') as f:
         regimes = json.load(f)
-        
+
     model_regimes_weighted = defaultdict(lambda: defaultdict(float))
     model_regimes_weight_sum = defaultdict(float)
-    
+
     for key, data in regimes.items():
-        parts = key.split("/")
-        model = parts[0]
-        task_id = parts[1] if len(parts) > 1 else parts[0]
-        
+        key_parts = key.rsplit("/", 2)
+        model = data.get("model") or (key_parts[0] if len(key_parts) == 3 else key)
+        task_id = data.get("task_id") or (key_parts[1] if len(key_parts) == 3 else key)
+
         # Match task to topic
         matched_topic = "unknown"
         for t_id in task_topics:
             if task_id.startswith(t_id):
                 matched_topic = task_topics[t_id]
                 break
-                
+
         rho = weights.get(matched_topic, 1.0)
         regime = data.get("regime", "unknown")
-        
+
         model_regimes_weighted[model][regime] += rho
         model_regimes_weight_sum[model] += rho
-        
+
     debiased_regimes = {}
     for model, r_counts in model_regimes_weighted.items():
         total_w = model_regimes_weight_sum[model]
@@ -62,7 +62,7 @@ def compute_debiased_dynamics(regimes_path, constraint_path, weights_path, topic
     # 2. Debiased Constraint Index (Expected Predictability)
     with open(constraint_path, 'r') as f:
         constraints = json.load(f)
-        
+
     weighted_cq_sum = 0.0
     cq_weight_sum = 0.0
     for task_id, data in constraints.items():
@@ -71,19 +71,19 @@ def compute_debiased_dynamics(regimes_path, constraint_path, weights_path, topic
             if task_id.startswith(t_id):
                 matched_topic = task_topics[t_id]
                 break
-                
+
         rho = weights.get(matched_topic, 1.0)
         cq = data.get("C_q", 0.0)
         weighted_cq_sum += rho * cq
         cq_weight_sum += rho
-        
+
     debiased_cq = float(weighted_cq_sum / cq_weight_sum) if cq_weight_sum > 0 else 0.0
 
     output = {
         "debiased_expected_C_q": debiased_cq,
         "debiased_regimes_probability": debiased_regimes
     }
-    
+
     with open(output_path, 'w') as f:
         json.dump(output, f, indent=4)
     logging.info(f"Wrote debiased Space-Time dynamics to {output_path}")
@@ -96,11 +96,11 @@ if __name__ == "__main__":
     parser.add_argument("--topics", required=True, help="Path to task-to-topic mapping JSON (e.g. mock results)")
     parser.add_argument("--output", required=True, help="Path to output debiased JSON")
     args = parser.parse_args()
-    
+
     compute_debiased_dynamics(
-        args.regimes, 
-        args.constraint, 
-        args.weights, 
-        args.topics, 
+        args.regimes,
+        args.constraint,
+        args.weights,
+        args.topics,
         args.output
     )

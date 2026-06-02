@@ -37,6 +37,40 @@ async def test_background_service_waits_for_ready_file(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_background_service_quotes_runtime_values_in_shell_command(tmp_path: Path):
+    script = tmp_path / "service with space.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        "import time\n"
+        "Path('ready with space.txt').write_text('ok', encoding='utf-8')\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    runtime_values = build_runtime_values(
+        workspace=tmp_path,
+        repo_root=Path.cwd(),
+        extra={"script_path": script.name},
+    )
+    service = BackgroundService(
+        name="quoted_service",
+        command="{python_exe} {script_path}",
+        ready_file="ready with space.txt",
+        startup_timeout_seconds=5,
+    )
+
+    services, _ = await start_background_services(
+        [service],
+        workspace=tmp_path,
+        repo_root=Path.cwd(),
+        runtime_values=runtime_values,
+    )
+    try:
+        assert (tmp_path / "ready with space.txt").exists()
+    finally:
+        await stop_background_services(services)
+
+
+@pytest.mark.asyncio
 async def test_background_service_rejects_cwd_outside_workspace(tmp_path: Path):
     runtime_values = build_runtime_values(workspace=tmp_path, repo_root=Path.cwd())
     service = BackgroundService(

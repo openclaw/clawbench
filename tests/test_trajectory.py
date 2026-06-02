@@ -152,6 +152,7 @@ def test_each_dangerous_command_surfaces_its_own_violation():
         f"expected two Dangerous shell command violations (one per command), got {dangerous_violations}"
     )
 
+
 def test_trajectory_counts_distinct_read_and_mutation_targets():
     transcript = Transcript(
         messages=[

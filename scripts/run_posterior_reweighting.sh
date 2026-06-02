@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
 # script: run_posterior_reweighting.sh
-# description: Computes the asymptotically efficient estimator for target population performance 
+# description: Computes the asymptotically efficient estimator for target population performance
 #              via importance sampling (inverse probability weighting).
 #
 # Following the principles of Bickel et al., let Q be the empirical design measure (the benchmark),
-# and P be the target population measure (the user distribution). Because the benchmark samples 
-# over-represent certain strata (e.g., mathematics), the unweighted sample mean is a biased estimator 
-# for the functional E_P[X]. 
+# and P be the target population measure (the user distribution). Because the benchmark samples
+# over-represent certain strata (e.g., mathematics), the unweighted sample mean is a biased estimator
+# for the functional E_P[X].
 #
-# We compute the Radon-Nikodym derivatives dP/dQ over the finite strata space and use them 
+# We compute the Radon-Nikodym derivatives dP/dQ over the finite strata space and use them
 # as importance weights \rho_k to derive a consistent Hajek-type estimator of the posterior score.
 
 set -e

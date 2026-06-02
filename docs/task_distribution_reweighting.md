@@ -9,7 +9,7 @@ Evaluation benchmarks often suffer from severe distribution shifts compared to r
 
 **Key question: Does our benchmark score actually reflect the user's experience?**
 
-Standard evaluation paradigms treat every task in a dataset equally, computing an unweighted mean over all instances. However, evaluation datasets are typically constructed via programmatic generation or scraping, leading to arbitrary internal distributions that do not reflect operational reality. 
+Standard evaluation paradigms treat every task in a dataset equally, computing an unweighted mean over all instances. However, evaluation datasets are typically constructed via programmatic generation or scraping, leading to arbitrary internal distributions that do not reflect operational reality.
 
 If a system is deployed where coding represents the vast majority of user queries, a math-heavy benchmark will misjudge the model's practical utility. We therefore treat the evaluation dataset as a biased sample from a broader semantic space, and apply **stratified reweighting** to correct this bias, moving from a static dataset score to a dynamic, user-aligned capability metric.
 
@@ -54,7 +54,7 @@ Yielding the weighted expected score: $\mathbb{E}_{q \sim P_{user}} [ \text{Scor
 
 ## 3. Advanced Capabilities: Inter-Task Similarity and Overlap
 
-Beyond simple clustering, NLU and NLI models allow us to construct a full **Task Similarity Graph**. 
+Beyond simple clustering, NLU and NLI models allow us to construct a full **Task Similarity Graph**.
 
 1.  **Redundancy Penalties:** If a cluster contains highly identical tasks (as measured by bidirectional NLI entailment), we can down-weight individual tasks within that cluster to avoid "capability farming" where a model succeeds only because the same question is asked 50 times in slightly different ways.
 2.  **Cross-Cluster Leakage:** Tasks may not neatly fit into orthogonal clusters. By computing soft-assignments or probabilities $P(C_k \mid q_i)$, we can allocate fractional weights, allowing complex multi-step reasoning tasks to contribute to the scores of multiple capabilities (e.g., a prompt requiring both Python coding and mathematical proofs).
@@ -84,7 +84,7 @@ This approach highlights a critical distinction: a model might be "State of the 
 
 ## 6. Space-Time Decomposition
 
-While the techniques described above debias single-step task success, they can also be combined with long-term dynamic metrics (the "Time" axis) to compute the expected real-world dynamical behavior of the agent. By applying the Radon-Nikodym derivatives ($\rho_i$) to temporal characteristics like Kaplan-Meier survival curves, Constraint Index $C(q)$, and regime clustering probabilities (e.g., trapped vs. chaotic limit cycles), we generate a **Space-Time Decomposition**. 
+While the techniques described above debias single-step task success, they can also be combined with long-term dynamic metrics (the "Time" axis) to compute the expected real-world dynamical behavior of the agent. By applying the Radon-Nikodym derivatives ($\rho_i$) to temporal characteristics like Kaplan-Meier survival curves, Constraint Index $C(q)$, and regime clustering probabilities (e.g., trapped vs. chaotic limit cycles), we generate a **Space-Time Decomposition**.
 
 This fusion calculates the Hajek estimators for time-series properties:
 $$ \mathbb{E}_{P}[\text{Regime} = r] \approx \frac{\sum_{i=1}^N \rho_{k_i} \mathbf{1}(\text{regime}_i = r)}{\sum_{i=1}^N \rho_{k_i}} $$

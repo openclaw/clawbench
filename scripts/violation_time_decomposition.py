@@ -5,10 +5,14 @@ import math
 import sys
 from pathlib import Path
 from collections import defaultdict
-import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from clawbench.dynamics_archive import load_task_runs_by_model
+from clawbench.trajectory import extract_shell_command, has_dangerous_shell_pattern
+
+
+def safe_name(value: str) -> str:
+    return value.replace("/", "_").replace(":", "_")
 
 def get_first_violation_turn(run):
     """
@@ -16,12 +20,15 @@ def get_first_violation_turn(run):
     Turn index is 1-based.
     If no violation, turn_index is the max turn + 1, has_violation is False.
     """
+    if not run.trajectory_result.forbidden_violations:
+        return len(run.transcript.assistant_messages) + 1, False
+
     for i, msg in enumerate(run.transcript.assistant_messages, 1):
         for tc in msg.tool_calls:
-            # Check for violation
-            if tc.error or tc.success is False:
+            command = extract_shell_command(tc)
+            if command and has_dangerous_shell_pattern(command):
                 return i, True
-    return len(run.transcript.assistant_messages) + 1, False
+    return max(len(run.transcript.assistant_messages), 1), True
 
 def compute_decomposition(events_by_topic, max_t=20):
     """
@@ -82,6 +89,14 @@ def compute_decomposition(events_by_topic, max_t=20):
     return metrics
 
 def plot_metrics(metrics, model_name, output_dir):
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ModuleNotFoundError:
+        return None
+
     max_t = len(metrics["marginal_hazard"])
     turns = list(range(1, max_t + 1))
     
@@ -128,13 +143,13 @@ def generate_markdown(metrics, model_name, plot_path, out_file):
         "## Theoretical Decomposition",
         "This report decomposes the time-to-first-violation for safety triggers and tool misuses.",
         "To connect the long-term behavior of agent risk to its spatial risk conditioned on context semantics, we decompose the first occurrence probability:",
-        "$$ P(T = t) = h(t) \cdot S(t-1) $$",
+        r"$$ P(T = t) = h(t) \cdot S(t-1) $$",
         "where $h(t)$ is the conditional hazard rate at turn $t$, and $S(t-1)$ is the macro survival probability.",
         "",
         "Furthermore, we examine the mutual information between the semantic spatial context (scenario) and the violation event at each turn to determine if localized contexts explain hazard spikes.",
         "",
         "## Visualization",
-        f"![Violation Metrics]({plot_path.name})",
+        f"![Violation Metrics]({plot_path.name})" if plot_path else "Plot generation skipped because matplotlib is not installed.",
         "",
         "## Empirical Metrics Table",
         "| Turn $t$ | Marginal $S(t)$ | Marginal $h(t)$ | Mutual Info (bits) |",
@@ -148,20 +163,27 @@ def generate_markdown(metrics, model_name, plot_path, out_file):
         mi = metrics["mutual_information"][i]
         md.append(f"| {t} | {s:.4f} | {h:.4f} | {mi:.4f} |")
         
-    out_file.write_text("\n".join(md))
+    out_file.write_text("\n".join(md), encoding="utf-8")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--archive-dir", type=Path, default=Path(".clawbench/run_cache"))
-    parser.add_argument("--results-dir", type=Path, default=Path("results"))
+    parser.add_argument(
+        "--reports-dir",
+        "--results-dir",
+        dest="reports_dir",
+        type=Path,
+        default=Path("reports/violation_time_decomposition"),
+    )
+    parser.add_argument("--tier", choices=["tier1", "tier2", "tier3", "tier4", "tier5"], default=None)
     parser.add_argument("--max-turn", type=int, default=15)
     args = parser.parse_args()
 
     print(f"Loading runs from {args.archive_dir}...")
-    grouped = load_task_runs_by_model(args.archive_dir)
+    grouped = load_task_runs_by_model(args.archive_dir, tier=args.tier)
     print(f"Loaded models: {list(grouped.keys())}")
     
-    args.results_dir.mkdir(parents=True, exist_ok=True)
+    args.reports_dir.mkdir(parents=True, exist_ok=True)
     
     for model_name, task_runs in grouped.items():
         print(f"Processing model: {model_name}")
@@ -176,19 +198,18 @@ def main():
             print(f"No events for {model_name}")
             continue
             
-        safe_model = model_name.replace("/", "_")
-        # Create a specific folder for this run session
-        model_out_dir = args.results_dir / model_name
+        safe_model = safe_name(model_name)
+        model_out_dir = args.reports_dir / safe_model
         model_out_dir.mkdir(parents=True, exist_ok=True)
         
         plot_path = plot_metrics(metrics, safe_model, model_out_dir)
         doc_path = model_out_dir / "dynamics_violation_decomposition.md"
-        generate_markdown(metrics, safe_model, plot_path, doc_path)
+        generate_markdown(metrics, model_name, plot_path, doc_path)
         print(f"Generated doc for {model_name}: {doc_path}")
 
         # Dump JSON
         json_path = model_out_dir / "violation_metrics.json"
-        json_path.write_text(json.dumps(metrics, indent=2))
+        json_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
 if __name__ == "__main__":
     main()

@@ -17,7 +17,7 @@ The **Semantic Spatio-Temporal Dynamics** framework solves this by fusing these 
 Evaluation datasets ($Q$) inherently suffer from distribution shifts compared to true real-world usage ($P$). To correct this, we stratify and reweight the semantic space of tasks.
 
 ### 2.1 NLU/NLI Semantic Clustering
-We embed the natural language instructions of each task $q_i$ using Dense NLU models to capture semantic intent, and employ Natural Language Inference (NLI) to confirm entailment and redundancy. 
+We embed the natural language instructions of each task $q_i$ using Dense NLU models to capture semantic intent, and employ Natural Language Inference (NLI) to confirm entailment and redundancy.
 Using clustering algorithms (e.g., HDBSCAN), we partition the dataset into $K$ distinct functional stratums: $\mathcal{C} = \{C_1, C_2, \dots, C_K\}$.
 
 ### 2.2 Importance Weighting (Radon-Nikodym Derivatives)
@@ -77,7 +77,7 @@ This is where **Time-to-Event (Survival Analysis)** breaks back in with immense 
 *   $\mathbb{E}[\text{Time-to-Failure} \mid \text{Tool} = \text{bash}]$
 *   $\mathbb{E}[\text{Probability of Limit Cycle} \mid \text{State} = \text{SyntaxError}]$
 
-By using Stratified Kaplan-Meier curves or Cox Proportional Hazards models with time-dependent covariates, researchers can isolate the exact state-action transitions that induce catastrophic drift. This is an immediate application of the dynamics—that the probability of failure or violation at step $t$ is exactly the cumulated product of the conditional probability that it did not fail at $s < t$ conditioned on the trajectory $\le s$, times $1 - \mathbb{P}(\text{did not fail at } t \mid \text{trajectory} < t)$—which formally connects the long-term behavior of agent risk to its spatial risk conditioned on context semantics and scenarios.
+By using Stratified Kaplan-Meier curves or Cox Proportional Hazards models with time-dependent covariates, researchers can isolate the exact state-action transitions that induce catastrophic drift.
 
 ---
 
