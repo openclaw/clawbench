@@ -509,7 +509,7 @@ class BenchmarkHarness:
 
     def _create_run_workspace(self, task: TaskDefinition, run_index: int) -> Path:
         state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR", os.path.expanduser("~/.openclaw")))
-        workspace_root = state_dir / "workspace" / "clawbench" / task.id
+        workspace_root = state_dir / "workspace-clawbench" / task.id
         workspace_root.mkdir(parents=True, exist_ok=True)
         workspace = workspace_root / f"run-{run_index}-{uuid.uuid4().hex[:8]}"
         workspace.mkdir(parents=True, exist_ok=True)

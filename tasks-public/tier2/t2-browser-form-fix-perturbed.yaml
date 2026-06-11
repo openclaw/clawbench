@@ -1,0 +1,75 @@
+id: t2-browser-form-fix-perturbed
+name: 'Tier 2: Browser Form Fix (Perturbed)'
+tier: tier2
+family: browser
+surface: browser
+pool: public_dev
+subsets:
+- hard
+capabilities:
+- browser_debugging
+- bugfix
+timeout_seconds: 600
+setup:
+  asset_packs:
+  - t2_browser_form_fix
+  background_services:
+  - name: form_app
+    command: python3 serve.py
+    ready_path: /health
+    startup_timeout_seconds: 20
+user:
+  max_turns: 2
+  turns:
+  - message: A newsletter signup page is failing at http://127.0.0.1:{form_app_port}/.
+      Reproduce the issue with the browser tool in the host browser, repair the frontend
+      code in the workspace, and confirm that submitting the form now works. If the
+      browser tool asks for a target, use `host`.
+completion:
+  execution_checks:
+  - name: browser form verification
+    command: node verify_form.cjs http://127.0.0.1:{form_app_port}/
+    env:
+      NODE_PATH: '{openclaw_node_path}:{benchmark_node_path}'
+trajectory:
+  required_families:
+  - browser
+  - edit
+  - execute
+  required_pre_edit_families:
+  - browser
+  required_post_edit_families:
+  - execute
+  min_distinct_families: 3
+  min_pre_edit_exploration_calls: 1
+  min_post_edit_verification_calls: 1
+  require_read_before_mutation: true
+  require_self_verification: true
+behavior:
+  require_plan: false
+  require_progress_updates: false
+judge:
+  rubric: "You are grading a single ClawBench agent run for task t2-browser-form-fix-perturbed\
+    \ (Tier 2: Browser Form Fix).\n\nScore the agent on a scale from 0.0 to 1.0:\n\
+    \  1.0 = the agent's output fully and correctly answers what the user asked,\n\
+    \        in a way the user could actually use without rework.\n  0.7 = mostly\
+    \ correct and usable, with minor issues or missed nuances.\n  0.4 = the agent\
+    \ attempted the task and produced something on-topic, but\n        the result\
+    \ is incomplete, partially wrong, or hard to use.\n  0.0 = the agent failed entirely,\
+    \ refused without justification, or\n        fabricated information.\n\nImportant\
+    \ grading guidance:\n  - Don't penalize the agent for writing artifacts to a non-standard\
+    \ path\n    (e.g. memory/2026-04-10.md instead of notes/quick_note.md). What matters\n\
+    \    is that the user could find and use the result, not which exact filename\n\
+    \    or directory was used. Search the entire workspace for the agent's work.\n\
+    \  - Don't penalize the agent for being terse or for skipping non-essential\n\
+    \    structure if the core deliverable is correct.\n  - DO penalize hallucinated\
+    \ content, missing required information, and\n    refusal to engage with the task.\n\
+    \  - DO penalize obvious correctness errors (wrong sums, wrong dates, wrong\n\
+    \    facts).\n\nCapability tags for this task: browser_debugging, bugfix.\nTask\
+    \ family: browser.\n\nReturn JSON only with keys: score, confidence, reason, rubric_hits,\
+    \ rubric_misses.\n"
+  passing_threshold: 0.7
+  include_transcript: true
+  include_completion_feedback: true
+  max_artifact_chars: 6000
+  max_transcript_chars: 6000

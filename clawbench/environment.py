@@ -6,13 +6,12 @@ import asyncio
 import json
 import logging
 import re
-import shlex
 from pathlib import Path
 from typing import Any
 
 from clawbench.client import GatewayClient
 from clawbench.paths import resolve_workspace_path
-from clawbench.render import render_template, render_value
+from clawbench.render import render_argv_template, render_shell_template, render_template, render_value
 from clawbench.schemas import (
     CompletionResult,
     CompletionSpec,
@@ -109,7 +108,11 @@ async def run_execution_check(
     workspace: Path,
     runtime_values: dict[str, Any],
 ) -> ExecutionCheckResult:
-    rendered_command = render_template(spec.command, runtime_values)
+    rendered_command = (
+        render_shell_template(spec.command, runtime_values)
+        if spec.shell
+        else render_template(spec.command, runtime_values)
+    )
     try:
         rendered_cwd = resolve_workspace_path(
             workspace,
@@ -152,7 +155,7 @@ async def run_execution_check(
             )
         else:
             process = await asyncio.create_subprocess_exec(
-                *shlex.split(rendered_command),
+                *render_argv_template(spec.command, runtime_values),
                 cwd=str(rendered_cwd),
                 env=full_env,
                 stdout=asyncio.subprocess.PIPE,

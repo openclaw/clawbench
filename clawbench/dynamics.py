@@ -60,6 +60,7 @@ class Dynamics:
     pca_trajectory: np.ndarray | None = None  # (n_steps, 2)
     bigram_transitions: dict[str, dict[str, float]] = field(default_factory=dict)
     memory_depth: float = 0.0       # I(X_t; X_{t-2} | X_{t-1})
+    renyi_d2: float = 0.0
 
 
 @dataclass
@@ -287,6 +288,7 @@ def compute_dynamics(transcript: Transcript) -> Dynamics:
     }
 
     ci = 0.5
+    renyi_d2 = 0.0
     if n > 2:
         cov = np.cov(X.T)
         eigvals = np.maximum(np.linalg.eigvalsh(cov), 0)
@@ -295,6 +297,8 @@ def compute_dynamics(transcript: Transcript) -> Dynamics:
             p = eigvals / tv
             pr = 1.0 / np.sum(p**2)
             ci = 1.0 - (pr - 1) / (X.shape[1] - 1)
+            sum_p2 = np.sum(p**2)
+            renyi_d2 = float(-np.log2(sum_p2)) if sum_p2 > 0 else 0.0
 
     h = _entropy(dict(fam_acc))
     er = err_count / n if n else 0
@@ -320,6 +324,7 @@ def compute_dynamics(transcript: Transcript) -> Dynamics:
         constraint_index=ci,
         bigram_transitions=_compute_bigram_transitions(families),
         memory_depth=_conditional_mi(families),
+        renyi_d2=renyi_d2,
     )
 
 

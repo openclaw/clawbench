@@ -38,6 +38,83 @@ async def test_run_agent_uses_staged_run_workspace(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_run_workspace_is_sibling_of_openclaw_workspace_and_cleaned_up(
+    tmp_path: Path,
+    monkeypatch,
+):
+    task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount")
+    state_dir = tmp_path / "state"
+    created_workspaces: list[Path] = []
+
+    class DoneSimulator:
+        is_done = True
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class RunGatewayClient:
+        def __init__(self, config) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def create_agent(self, *, name: str, workspace: str) -> str:
+            created_workspaces.append(Path(workspace))
+            return "agent-test-123"
+
+        async def create_session(self, *, model: str, agent_id: str, label: str) -> str:
+            return "session-test-123"
+
+        async def subscribe(self, session_key: str) -> None:
+            pass
+
+        async def delete_session(self, session_key: str) -> None:
+            pass
+
+        async def delete_agent(self, agent_id: str, *, delete_files: bool) -> None:
+            pass
+
+    def fake_setup_workspace(self, current_task, workspace: Path) -> None:
+        workspace.joinpath("marker.txt").write_text("created", encoding="utf-8")
+
+    async def fake_start_background_services(services, *, workspace, repo_root, runtime_values):
+        return [], runtime_values
+
+    async def fake_score_task_run(**kwargs):
+        return TaskRunResult(
+            task_id=task.id,
+            tier=task.tier.value,
+            family=task.family.value,
+            run_index=0,
+            run_score=1.0,
+        )
+
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("CLAWBENCH_RUN_CACHE_DIR", "")
+    monkeypatch.delenv("CLAWBENCH_KEEP_WORKSPACES", raising=False)
+    monkeypatch.setattr(BenchmarkHarness, "_setup_workspace", fake_setup_workspace)
+    monkeypatch.setattr("clawbench.harness.GatewayClient", RunGatewayClient)
+    monkeypatch.setattr("clawbench.harness.UserSimulator", DoneSimulator)
+    monkeypatch.setattr("clawbench.harness.start_background_services", fake_start_background_services)
+    monkeypatch.setattr("clawbench.harness.score_task_run", fake_score_task_run)
+
+    harness = BenchmarkHarness(gateway_config=GatewayConfig(), model="test-model", randomize_order=False)
+
+    result = await harness._run_single(task, run_index=0)
+
+    assert result.run_score == 1.0
+    assert len(created_workspaces) == 1
+    workspace = created_workspaces[0]
+    assert workspace.parent == state_dir / "workspace-clawbench" / task.id
+    assert not workspace.is_relative_to(state_dir / "workspace")
+    assert not workspace.exists()
+
+
+@pytest.mark.asyncio
 async def test_prepare_run_hook_executes_before_each_run(monkeypatch):
     task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount")
     calls: list[tuple[str, int]] = []

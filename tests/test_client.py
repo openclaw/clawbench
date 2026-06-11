@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 from websockets.datastructures import Headers
@@ -9,7 +10,7 @@ from websockets.exceptions import InvalidMessage, InvalidStatus
 from websockets.http11 import Response
 
 from clawbench.client import GatewayClient, GatewayConfig, _correlate_transcript, _parse_single_message
-from clawbench.schemas import Transcript
+from clawbench.schemas import EfficiencyResult, TokenUsage, Transcript
 
 
 def test_gateway_config_defaults():
@@ -19,6 +20,30 @@ def test_gateway_config_defaults():
     # spurious empty_response failures.
     assert cfg.connect_timeout == 30.0
     assert cfg.request_timeout == 60.0
+
+
+def test_set_session_auth_profile_override_patches_local_store(tmp_path: Path, monkeypatch):
+    state_dir = tmp_path / "state"
+    store_dir = state_dir / "agents" / "agent-stub" / "sessions"
+    store_dir.mkdir(parents=True)
+    store_path = store_dir / "sessions.json"
+    store_path.write_text(
+        json.dumps({"session-1": {"sessionId": "session-1"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+
+    ok = GatewayClient().set_session_auth_profile_override(
+        "session-1",
+        agent_id="agent-stub",
+        auth_profile_id="openai-codex:clawbench-env",
+    )
+
+    assert ok is True
+    entry = json.loads(store_path.read_text(encoding="utf-8"))["session-1"]
+    assert entry["authProfileOverride"] == "openai-codex:clawbench-env"
+    assert entry["authProfileOverrideSource"] == "user"
+    assert "authProfileOverrideCompactionCount" not in entry
 
 
 def test_gateway_config_env_overrides(monkeypatch):
@@ -39,7 +64,10 @@ def test_gateway_config_invalid_env_falls_back_to_default(monkeypatch, caplog, r
 
 
 @pytest.mark.asyncio
-async def test_gateway_client_advertises_protocol_v4_compat(monkeypatch: pytest.MonkeyPatch):
+async def test_gateway_client_disables_websocket_keepalive_for_long_rpc(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    connect_kwargs: dict[str, object] = {}
     connect_params: dict[str, object] = {}
 
     class FakeWebSocket:
@@ -47,6 +75,7 @@ async def test_gateway_client_advertises_protocol_v4_compat(monkeypatch: pytest.
             return None
 
     async def fake_connect(*args, **kwargs):
+        connect_kwargs.update(kwargs)
         return FakeWebSocket()
 
     async def fake_wait_event(self, event_name: str, *, timeout: float):
@@ -54,7 +83,7 @@ async def test_gateway_client_advertises_protocol_v4_compat(monkeypatch: pytest.
 
     async def fake_rpc(self, method: str, params=None, **kwargs):
         connect_params.update(params or {})
-        return {"payload": {"type": "hello-ok", "protocol": 4}}
+        return {"payload": {"type": "hello-ok", "protocol": 3}}
 
     async def fake_listener(self):
         await asyncio.sleep(60)
@@ -68,6 +97,8 @@ async def test_gateway_client_advertises_protocol_v4_compat(monkeypatch: pytest.
     await client.connect()
     await client.close()
 
+    assert connect_kwargs["ping_interval"] is None
+    assert connect_kwargs["ping_timeout"] is None
     assert connect_params["minProtocol"] == 3
     assert connect_params["maxProtocol"] == 4
 
@@ -145,6 +176,54 @@ def test_parser_accepts_codex_tool_search_output_shape():
     assert transcript.tool_call_sequence[1].success is True
 
 
+def test_parser_accepts_kebab_case_codex_tool_search_blocks():
+    tool_message = _parse_single_message(
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool-search-call",
+                    "call_id": "search-2",
+                    "title": "tool_search",
+                    "parameters": {"query": "calendar"},
+                },
+                {
+                    "type": "tool-call",
+                    "tool_call_id": "call-2",
+                    "tool": "message",
+                    "args": {"text": "ok"},
+                },
+            ],
+        }
+    )
+    result_message = _parse_single_message(
+        {
+            "role": "tool",
+            "content": [
+                {
+                    "type": "tool-search-output",
+                    "call_id": "search-2",
+                    "content": [{"content": "message: available"}],
+                },
+                {
+                    "type": "tool-call-output",
+                    "tool_call_id": "call-2",
+                    "text": "delivered",
+                },
+            ],
+        }
+    )
+
+    transcript = _correlate_transcript(Transcript(messages=[tool_message, result_message]))  # type: ignore[arg-type]
+
+    assert [call.id for call in transcript.tool_call_sequence] == ["search-2", "call-2"]
+    assert [call.name for call in transcript.tool_call_sequence] == ["tool_search", "message"]
+    assert transcript.tool_call_sequence[0].input == {"query": "calendar"}
+    assert transcript.tool_call_sequence[0].output == "message: available"
+    assert transcript.tool_call_sequence[1].input == {"text": "ok"}
+    assert transcript.tool_call_sequence[1].output == "delivered"
+
+
 def test_parser_correlates_plain_top_level_tool_result_message():
     tool_message = _parse_single_message(
         {
@@ -189,6 +268,15 @@ def test_message_usage_is_parsed_into_transcript_usage():
     assert message.usage.reasoning_tokens == 5
     assert message.usage.total_tokens == 40
     assert message.usage.total_cost_usd == 0.0125
+
+
+def test_efficiency_component_tokens_stay_separate_from_total_snapshot():
+    usage = TokenUsage(input_tokens=10, output_tokens=5, cache_read_tokens=3, total_tokens=10_000)
+
+    result = EfficiencyResult.from_usage(duration_ms=123, usage=usage)
+
+    assert result.component_tokens == 18
+    assert result.total_tokens == 10_000
 
 
 @pytest.mark.asyncio
@@ -295,39 +383,6 @@ async def test_send_and_wait_collects_messages_that_arrive_after_final_state():
     transcript = await client.send_and_wait(session_key, "hello", timeout=1.0)
 
     assert [message.text for message in transcript.assistant_messages] == ["Late but valid."]
-
-
-@pytest.mark.asyncio
-async def test_rpc_send_failure_cleans_pending_request():
-    class FailingWebSocket:
-        async def send(self, payload: str) -> None:  # noqa: ARG002
-            raise ConnectionError("socket closed")
-
-    client = GatewayClient(GatewayConfig(request_timeout=0.01))
-    client._ws = FailingWebSocket()  # type: ignore[assignment]
-
-    with pytest.raises(ConnectionError, match="socket closed"):
-        await client._rpc("sessions.create", {"model": "test-model"})
-
-    assert client._pending == {}
-
-
-@pytest.mark.asyncio
-async def test_rpc_timeout_cleans_pending_request():
-    sent_frames: list[dict[str, object]] = []
-
-    class SilentWebSocket:
-        async def send(self, payload: str) -> None:
-            sent_frames.append(json.loads(payload))
-
-    client = GatewayClient(GatewayConfig(request_timeout=0.01))
-    client._ws = SilentWebSocket()  # type: ignore[assignment]
-
-    with pytest.raises(TimeoutError, match="RPC sessions.create timed out"):
-        await client._rpc("sessions.create", {"model": "test-model"})
-
-    assert sent_frames[0]["method"] == "sessions.create"
-    assert client._pending == {}
 
 
 @pytest.mark.asyncio

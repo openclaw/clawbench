@@ -162,6 +162,16 @@ class TokenUsage(BaseModel):
             total_cost_usd=self.total_cost_usd + other.total_cost_usd,
         )
 
+    @property
+    def component_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.reasoning_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+        )
+
 
 class EfficiencyResult(BaseModel):
     duration_ms: int = 0
@@ -170,6 +180,7 @@ class EfficiencyResult(BaseModel):
     reasoning_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    component_tokens: int = 0
     total_tokens: int = 0
     estimated_cost_usd: float = 0.0
 
@@ -182,9 +193,22 @@ class EfficiencyResult(BaseModel):
             reasoning_tokens=usage.reasoning_tokens,
             cache_read_tokens=usage.cache_read_tokens,
             cache_write_tokens=usage.cache_write_tokens,
+            component_tokens=usage.component_tokens,
             total_tokens=usage.total_tokens,
             estimated_cost_usd=usage.total_cost_usd,
         )
+
+    @model_validator(mode="after")
+    def _populate_component_tokens(self) -> EfficiencyResult:
+        if self.component_tokens == 0:
+            self.component_tokens = (
+                self.input_tokens
+                + self.output_tokens
+                + self.reasoning_tokens
+                + self.cache_read_tokens
+                + self.cache_write_tokens
+            )
+        return self
 
 
 class TranscriptMessage(BaseModel):

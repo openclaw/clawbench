@@ -20,6 +20,9 @@ on:
   # the Actions tab without pushing a new commit.
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # Only one mirror job at a time so we never race ourselves into
 # non-fast-forward pushes on the Space remote.
 concurrency:

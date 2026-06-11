@@ -102,11 +102,16 @@ def discover_model_roots(archive_dir: Path) -> dict[str, Path]:
     if _is_task_collection_root(archive_dir):
         return {archive_dir.name: archive_dir}
 
-    roots = {
-        child.name: child
-        for child in sorted(archive_dir.iterdir())
-        if child.is_dir() and _is_task_collection_root(child)
-    }
+    roots = {}
+    for child in sorted(archive_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        if _is_task_collection_root(child):
+            roots[child.name] = child
+        else:
+            for subchild in sorted(child.iterdir()):
+                if subchild.is_dir() and _is_task_collection_root(subchild):
+                    roots[f"{child.name}/{subchild.name}"] = subchild
     return roots
 
 

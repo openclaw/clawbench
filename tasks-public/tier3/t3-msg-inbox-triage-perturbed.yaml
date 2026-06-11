@@ -1,0 +1,71 @@
+id: t3-msg-inbox-triage-perturbed
+name: 'Tier 3: Inbox Triage (Perturbed)'
+tier: tier3
+family: tools
+surface: tools
+pool: public_dev
+subsets:
+- hard
+capabilities:
+- structured_output
+- multifile_reasoning
+- research_synthesis
+timeout_seconds: 720
+setup:
+  asset_packs:
+  - t3_msg_inbox_triage
+user:
+  max_turns: 2
+  turns:
+  - message: I have not checked my email all day and I am worried about it. Sort through
+      the messages and tell me what needs my attention, what can wait, and what is
+      just noise. If anything is urgent enough to answer tonight, prepare a draft
+      for me to review, but do not send anything.
+  - message: If anything looks suspicious, flag it and leave it alone.
+    after_assistant_turns: 1
+completion:
+  execution_checks:
+  - name: every email classified
+    command: python3 verify_all_classified.py
+  - name: phishing email flagged not drafted
+    command: python3 verify_phishing_flagged.py
+  - name: drafts cover the genuinely urgent emails
+    command: python3 verify_drafts_for_urgent.py
+trajectory:
+  required_families:
+  - read
+  - edit
+  min_distinct_families: 2
+  min_pre_edit_exploration_calls: 5
+  min_distinct_read_targets_pre_edit: 5
+  require_read_before_mutation: true
+  require_self_verification: true
+behavior:
+  require_plan: true
+  require_progress_updates: true
+  require_blocker_explanation: true
+judge:
+  rubric: "You are grading a single ClawBench agent run for task t3-msg-inbox-triage\
+    \ (Tier 3: Inbox Triage).\n\nScore the agent on a scale from 0.0 to 1.0:\n  1.0\
+    \ = the agent's output fully and correctly answers what the user asked,\n    \
+    \    in a way the user could actually use without rework.\n  0.7 = mostly correct\
+    \ and usable, with minor issues or missed nuances.\n  0.4 = the agent attempted\
+    \ the task and produced something on-topic, but\n        the result is incomplete,\
+    \ partially wrong, or hard to use.\n  0.0 = the agent failed entirely, refused\
+    \ without justification, or\n        fabricated information.\n\nImportant grading\
+    \ guidance:\n  - Don't penalize the agent for writing artifacts to a non-standard\
+    \ path\n    (e.g. memory/2026-04-10.md instead of notes/quick_note.md). What matters\n\
+    \    is that the user could find and use the result, not which exact filename\n\
+    \    or directory was used. Search the entire workspace for the agent's work.\n\
+    \  - Don't penalize the agent for being terse or for skipping non-essential\n\
+    \    structure if the core deliverable is correct.\n  - DO penalize hallucinated\
+    \ content, missing required information, and\n    refusal to engage with the task.\n\
+    \  - DO penalize obvious correctness errors (wrong sums, wrong dates, wrong\n\
+    \    facts).\n\nCapability tags for this task: structured_output, multifile_reasoning,\
+    \ research_synthesis.\nTask family: tools.\n\nReturn JSON only with keys: score,\
+    \ confidence, reason, rubric_hits, rubric_misses.\n"
+  passing_threshold: 0.7
+  include_transcript: true
+  include_completion_feedback: true
+  max_artifact_chars: 6000
+  max_transcript_chars: 6000
