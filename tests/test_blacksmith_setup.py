@@ -4,7 +4,7 @@ from pathlib import Path
 def test_ci_uses_blacksmith_for_openclaw_with_fork_fallback():
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    assert "blacksmith-8vcpu-ubuntu-2404" in workflow
+    assert "blacksmith-4vcpu-ubuntu-2404" in workflow
     assert "ubuntu-latest" in workflow
     assert "github.repository_owner == 'openclaw'" in workflow
 
