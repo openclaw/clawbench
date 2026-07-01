@@ -240,9 +240,13 @@ def test_run_phase_sends_rendered_prompt_and_parses_conversation(tmp_path: Path)
 
     ctx, result = asyncio.run(_go())
 
-    # The stub runner saw the rendered user message.
+    # The stub runner saw the rendered user message with workspace guidance.
     assert runners
-    assert runners[0].last_prompt == "List the workspace files."
+    assert runners[0].last_prompt is not None
+    assert "List the workspace files." in runners[0].last_prompt
+    assert str(tmp_path) in runners[0].last_prompt
+    assert "Inspect files in this directory first" in runners[0].last_prompt
+    assert "do not search outside the workspace" in runners[0].last_prompt
 
     # Conversation parsed into the shared transcript.
     assert result.error is None
@@ -362,6 +366,59 @@ def test_ai_agent_direct_endpoint_reports_custom_provider(tmp_path: Path) -> Non
     assert calls[0]["base_url"] == "https://api.openai.com/v1"
     assert calls[0]["api_key"] == "secret"
     assert calls[0]["provider"] == "custom"
+
+
+def test_ai_agent_phase_sends_workspace_guidance(tmp_path: Path) -> None:
+    task = _files_only_task()
+    calls: list[dict] = []
+
+    class _StubAgent:
+        def run_conversation(
+            self,
+            user_message: str,
+            *,
+            conversation_history=None,
+            task_id=None,
+        ) -> dict:
+            calls.append(
+                {
+                    "user_message": user_message,
+                    "conversation_history": conversation_history,
+                    "task_id": task_id,
+                }
+            )
+            return {
+                "messages": [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": "Done."},
+                ],
+                "api_calls": 1,
+                "completed": True,
+            }
+
+    adapter = HermesAdapter(
+        HermesAdapterConfig(
+            model="stub-model",
+            driver_mode="ai_agent",
+            agent_factory=lambda **_: _StubAgent(),
+        )
+    )
+
+    async def _go():
+        async with adapter:
+            ctx = _make_ctx(task, tmp_path)
+            await adapter.setup(ctx)
+            return await adapter.run_phase(task.phases[0], ctx)
+
+    result = asyncio.run(_go())
+
+    assert result.error is None
+    assert calls
+    sent = calls[0]["user_message"]
+    assert "List the workspace files." in sent
+    assert str(tmp_path) in sent
+    assert "Inspect files in this directory first" in sent
+    assert "do not search outside the workspace" in sent
 
 
 # ---------------------------------------------------------------------------

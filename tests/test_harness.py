@@ -3,6 +3,9 @@ from pathlib import Path
 import pytest
 
 from clawbench.client import GatewayConfig
+from clawbench.adapters.base import AdapterContext, AgentAdapter, PhaseResult, StateQueryResult
+from clawbench.adapters import ADAPTERS
+from clawbench.canonical import AdapterCapability
 from clawbench.harness import BenchmarkHarness
 from clawbench.schemas import CompletionResult, JudgeResult, TaskRunResult
 from clawbench.tasks import load_all_tasks
@@ -329,19 +332,55 @@ async def test_run_records_adapter_surface(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_rejects_registered_but_unwired_adapter(monkeypatch):
-    task = next(task for task in load_all_tasks() if task.id == "t1-bugfix-discount")
+async def test_registered_adapter_runs_through_adapter_lifecycle(monkeypatch, tmp_path: Path):
+    task = next(task for task in load_all_tasks() if task.id == "t1-fs-quick-note")
+    state_dir = tmp_path / "state"
+    contexts: list[AdapterContext] = []
+
+    class WritingAdapter(AgentAdapter):
+        name = "writing-test"
+        capabilities = {AdapterCapability.FILES, AdapterCapability.EXECUTION}
+
+        async def setup(self, ctx: AdapterContext) -> None:
+            contexts.append(ctx)
+
+        async def run_phase(self, phase, ctx: AdapterContext) -> PhaseResult:
+            (ctx.workspace / "note.md").write_text(
+                "- Pick up dry cleaning Thursday\n"
+                "- Sam's recital Saturday at 4\n"
+                "- Pay the babysitter $60\n",
+                encoding="utf-8",
+            )
+            return PhaseResult(completed_normally=True)
+
+        async def verify_state_query(self, query, ctx: AdapterContext) -> StateQueryResult:
+            return StateQueryResult(ok=False, capability_missing=True)
+
+        async def teardown(self, ctx: AdapterContext) -> None:
+            pass
+
+    monkeypatch.setitem(ADAPTERS, WritingAdapter.name, WritingAdapter)
     monkeypatch.setattr("clawbench.harness.load_all_tasks", lambda **_: [task])
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("CLAWBENCH_RUN_CACHE_DIR", "")
+    monkeypatch.delenv("CLAWBENCH_KEEP_WORKSPACES", raising=False)
 
     harness = BenchmarkHarness(
         gateway_config=GatewayConfig(),
         model="test-model",
-        adapter="hermes",
+        adapter=WritingAdapter.name,
         runs_per_task=1,
         randomize_order=False,
         print_report=False,
         quiet=True,
     )
 
-    with pytest.raises(ValueError, match="not yet wired"):
-        await harness.run()
+    result = await harness.run()
+
+    run = result.task_results[0]
+    assert contexts
+    assert contexts[0].model == "test-model"
+    assert contexts[0].workspace.parent == state_dir / "workspace-clawbench" / task.id
+    assert run.mean_completion_score == 1.0
+    assert result.environment["adapter"] == WritingAdapter.name
+    assert not contexts[0].workspace.exists()

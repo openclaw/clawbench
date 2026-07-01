@@ -20,7 +20,9 @@ from rich.table import Table
 
 from clawbench import __version__
 from clawbench.ablation import build_ablation_profile
+from clawbench.adapters import ADAPTERS, AdapterConfig, AdapterContext, get_adapter
 from clawbench.client import GatewayClient, GatewayConfig
+from clawbench.canonical.convert import from_task_definition
 from clawbench.releases import compute_task_snapshot_fingerprint, load_active_release
 from clawbench.schemas import (
     BenchmarkResult,
@@ -45,6 +47,22 @@ console = Console()
 KNOWN_ADAPTERS = ("openclaw", "hermes", "codex", "claude-code")
 EXECUTABLE_ADAPTERS = {"openclaw"}
 RUN_CACHE_SCHEMA_VERSION = 2
+
+
+class _LocalVerificationClient:
+    """Verifier shim for adapter runs that do not use an OpenClaw gateway.
+
+    File assertions and execution checks do not need a gateway client. Memory,
+    session, cron, and gateway assertions still call methods on the client; this
+    shim fails those calls explicitly so unsupported capabilities do not look
+    like successful OpenClaw state.
+    """
+
+    async def _rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError(f"Gateway RPC '{method}' is unavailable for local adapter runs")
+
+    async def get_agent_file(self, agent_id: str, file_name: str) -> dict[str, Any]:
+        raise RuntimeError("Agent file lookup is unavailable for local adapter runs")
 
 
 class _NullCtx:
@@ -122,14 +140,10 @@ class BenchmarkHarness:
         self.last_task_runs: dict[str, list[TaskRunResult]] = {}
 
     async def run(self) -> BenchmarkResult:
-        if self.adapter not in KNOWN_ADAPTERS:
+        if self.adapter not in ADAPTERS:
             raise ValueError(
-                f"Unknown adapter '{self.adapter}'. Known adapters: {', '.join(KNOWN_ADAPTERS)}"
-            )
-        if self.adapter not in EXECUTABLE_ADAPTERS:
-            raise ValueError(
-                f"Adapter '{self.adapter}' is registered as a target but is not yet wired "
-                "into the end-to-end scoring harness. Use 'openclaw' for executable runs."
+                f"Unknown adapter '{self.adapter}'. Registered adapters: "
+                f"{', '.join(sorted(ADAPTERS))}"
             )
 
         tasks = load_all_tasks(
@@ -272,6 +286,9 @@ class BenchmarkHarness:
             console.print(f"    [red]! {failure}[/]")
 
     async def _run_single(self, task: TaskDefinition, run_index: int) -> TaskRunResult:
+        if self.adapter != "openclaw":
+            return await self._run_single_adapter(task, run_index)
+
         # Per-turn timeout cap: prevents a single send_and_wait from burning the entire task
         # timeout (often 300-600s). Default 180s is enough for any reasonable single-turn
         # response and fails fast on stuck models. Override with env var if needed.
@@ -493,6 +510,210 @@ class BenchmarkHarness:
                             await cleanup_client.delete_agent(agent_id, delete_files=False)
                 except Exception as exc:
                     logger.warning("Session cleanup failed: %s", exc)
+            if os.environ.get("CLAWBENCH_KEEP_WORKSPACES") != "1":
+                shutil.rmtree(workspace, ignore_errors=True)
+
+    def _build_adapter_config(self) -> AdapterConfig:
+        if self.adapter == "hermes":
+            from clawbench.adapters.hermes import HermesAdapterConfig
+
+            max_iterations = int(os.environ.get("HERMES_MAX_ITERATIONS", "15"))
+            timeout_seconds = int(os.environ.get("HERMES_COMMAND_TIMEOUT_SECONDS", "60"))
+            return HermesAdapterConfig(
+                model=self.model,
+                env_type=os.environ.get("HERMES_ENV_TYPE", "local"),
+                max_iterations=max_iterations,
+                timeout_seconds=timeout_seconds,
+                base_url=(
+                    os.environ.get("HERMES_BASE_URL")
+                    or os.environ.get("OPENAI_BASE_URL")
+                    or None
+                ),
+                api_key=(
+                    os.environ.get("HERMES_API_KEY")
+                    or os.environ.get("OPENAI_API_KEY")
+                    or None
+                ),
+                provider=os.environ.get("HERMES_PROVIDER") or None,
+                api_mode=os.environ.get("HERMES_API_MODE") or None,
+                prompt_variant=self.prompt_variant,
+                driver_mode=os.environ.get("HERMES_DRIVER_MODE", "mini_swe"),
+                enabled_toolsets=self.enabled_toolsets or None,
+                disabled_toolsets=self.disabled_toolsets or None,
+                hermes_home=os.environ.get("HERMES_HOME") or None,
+            )
+        return AdapterConfig(model=self.model)
+
+    async def _run_single_adapter(self, task: TaskDefinition, run_index: int) -> TaskRunResult:
+        per_run_budget = float(os.environ.get("CLAWBENCH_PER_RUN_BUDGET_SECONDS", "300"))
+
+        cache_dir_env = os.environ.get("CLAWBENCH_RUN_CACHE_DIR", "/data/run_cache")
+        cache_path: Path | None = None
+        if cache_dir_env:
+            cache_path = self._run_cache_path(Path(cache_dir_env), task, run_index)
+            if cache_path.exists():
+                try:
+                    cached = TaskRunResult.model_validate_json(cache_path.read_text(encoding="utf-8"))
+                    cached.run_index = run_index
+                    return cached
+                except Exception as exc:
+                    logger.warning("Cache load failed for %s/run%s: %s (will re-run)", task.id, run_index, exc)
+
+        workspace = self._create_run_workspace(task, run_index)
+        services = []
+        adapter = None
+        ctx: AdapterContext | None = None
+        timings: dict[str, float] = {}
+
+        def _tick(label: str, since: float) -> float:
+            now = time.monotonic()
+            timings[label] = round(now - since, 2)
+            return now
+
+        t_run_start = time.monotonic()
+        try:
+            t_phase = t_run_start
+            self._setup_workspace(task, workspace)
+            t_phase = _tick("workspace_setup", t_phase)
+
+            runtime_values = build_runtime_values(
+                workspace=workspace,
+                repo_root=self.repo_root,
+                extra={"task_id": task.id, "model": self.model, "prompt_variant": self.prompt_variant},
+            )
+            services, runtime_values = await start_background_services(
+                task.setup.background_services,
+                workspace=workspace,
+                repo_root=self.repo_root,
+                runtime_values=runtime_values,
+            )
+            t_phase = _tick("bg_services_start", t_phase)
+
+            canonical_task = from_task_definition(task)
+            adapter_cls = get_adapter(self.adapter)
+            adapter_config = self._build_adapter_config()
+            missing = adapter_cls.missing_capabilities_for(canonical_task, adapter_config)
+            if missing:
+                missing_labels = ", ".join(sorted(cap.value for cap in missing))
+                raise RuntimeError(
+                    f"Adapter '{self.adapter}' does not support required capabilities: "
+                    f"{missing_labels}"
+                )
+
+            transcript = Transcript()
+            ctx = AdapterContext(
+                task=canonical_task,
+                workspace=workspace,
+                runtime_values=runtime_values,
+                run_index=run_index,
+                model=self.model,
+                transcript=transcript,
+            )
+            adapter = adapter_cls(adapter_config)
+
+            start_ms = _now_ms()
+            phase_error: str | None = None
+            async with adapter:
+                await adapter.setup(ctx)
+                try:
+                    for phase_index, phase in enumerate(canonical_task.phases):
+                        elapsed = time.monotonic() - t_run_start
+                        if elapsed >= per_run_budget:
+                            phase_error = (
+                                f"Run {task.id}/{run_index} hit per-run budget "
+                                f"({per_run_budget:.0f}s)"
+                            )
+                            break
+                        phase_start = time.monotonic()
+                        phase_result = await adapter.run_phase(phase, ctx)
+                        timings[f"phase{phase_index}_total"] = round(
+                            time.monotonic() - phase_start, 2
+                        )
+                        if phase_result.error:
+                            phase_error = phase_result.error
+                            break
+                finally:
+                    await adapter.teardown(ctx)
+
+            duration_ms = _now_ms() - start_ms
+            t_score_start = time.monotonic()
+            result = await score_task_run(
+                task=task,
+                transcript=transcript,
+                workspace=workspace,
+                client=_LocalVerificationClient(),  # type: ignore[arg-type]
+                session_key="",
+                agent_id=None,
+                duration_ms=duration_ms,
+                runtime_values=runtime_values,
+                judge_model=self.judge_model,
+                judge_affects_score=self.judge_affects_score,
+            )
+            timings["score"] = round(time.monotonic() - t_score_start, 2)
+            timings["total"] = round(time.monotonic() - t_run_start, 2)
+            result.run_index = run_index
+            if phase_error:
+                result.error = phase_error
+
+            if cache_path is not None:
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    tmp_path = cache_path.with_suffix(".json.tmp")
+                    tmp_path.write_text(
+                        result.model_dump_json(indent=2), encoding="utf-8"
+                    )
+                    tmp_path.replace(cache_path)
+                except Exception as exc:
+                    logger.warning("Cache write failed for %s/run%s: %s", task.id, run_index, exc)
+
+            logger.info(
+                "TIMING %s/run%s adapter=%s total=%.1fs score=%.2f C=%.2f T=%.2f B=%.2f  %s",
+                task.id,
+                run_index,
+                self.adapter,
+                timings["total"],
+                result.run_score,
+                result.completion_result.score,
+                result.trajectory_result.score,
+                result.behavior_result.score,
+                " ".join(f"{k}={v}s" for k, v in timings.items() if k != "total"),
+            )
+            return result
+        except Exception as exc:
+            logger.exception("Run %s/%s failed", task.id, run_index)
+            return TaskRunResult(
+                task_id=task.id,
+                tier=task.tier.value,
+                family=task.family.value,
+                scenario=task.scenario.value if task.scenario else "",
+                subscenario=task.subscenario,
+                artifact_type=task.artifact_type.value if task.artifact_type else "",
+                prompt_variant=self.prompt_variant,
+                query_difficulty=task.query_difficulty.value if task.query_difficulty else "",
+                query_weight=task.query_weight,
+                pool=task.pool.value,
+                subsets=[subset.value for subset in task.subsets],
+                capabilities=[capability.value for capability in task.capabilities],
+                variant_group=task.variant_group,
+                variant_id=task.variant_id,
+                template_id=task.template_id,
+                release_id=task.release_id,
+                source_kind=task.source_kind,
+                privacy_tier=task.privacy_tier,
+                contamination_risk=task.contamination_risk,
+                freshness_epoch=task.freshness_epoch,
+                similarity_hash=task.similarity_hash,
+                official=task.official,
+                run_index=run_index,
+                run_score=0.0,
+                transcript=Transcript(),
+                duration_ms=0,
+                delivery_outcome=DeliveryOutcome.FAIL,
+                failure_mode=classify_error_failure_mode(task, str(exc)),
+                error=str(exc),
+            )
+        finally:
+            await stop_background_services(services)
             if os.environ.get("CLAWBENCH_KEEP_WORKSPACES") != "1":
                 shutil.rmtree(workspace, ignore_errors=True)
 
@@ -790,8 +1011,8 @@ class BenchmarkHarness:
                 "judge_affects_score": self.judge_affects_score,
                 "adapter": self.adapter,
                 "ablation_profile": ablation_profile.model_dump(),
-                "known_adapters": list(KNOWN_ADAPTERS),
-                "executable_adapters": sorted(EXECUTABLE_ADAPTERS),
+                "known_adapters": sorted(ADAPTERS),
+                "executable_adapters": sorted(ADAPTERS),
                 "subsets": self.subsets,
                 "capabilities": self.capabilities,
                 "official_only": self.official_only,

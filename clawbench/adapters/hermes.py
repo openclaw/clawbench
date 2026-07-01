@@ -477,7 +477,10 @@ class HermesAdapter(AgentAdapter):
         message = first_turn.variant_messages.get(
             self._config.prompt_variant, first_turn.message
         )
-        prompt = render_template(message, ctx.runtime_values)
+        prompt = self._with_workspace_guidance(
+            render_template(message, ctx.runtime_values),
+            ctx,
+        )
 
         phase_timeout = float(
             phase.timeout_seconds
@@ -518,6 +521,18 @@ class HermesAdapter(AgentAdapter):
             completed_normally=bool(result.get("completed", False)) if isinstance(result, dict) else False,
         )
 
+    def _with_workspace_guidance(self, prompt: str, ctx: AdapterContext) -> str:
+        return (
+            "You are running inside a ClawBench task workspace.\n"
+            f"Current workspace: {ctx.workspace}\n"
+            "Treat this directory as the complete task environment. "
+            "Inspect files in this directory first, use relative paths for task files, "
+            "and do not search outside the workspace unless the task explicitly asks you to.\n"
+            "Write all created or modified artifacts inside this workspace.\n\n"
+            "User task:\n"
+            f"{prompt}"
+        )
+
     async def _run_ai_agent_phase(
         self,
         phase: CanonicalPhase,
@@ -548,6 +563,7 @@ class HermesAdapter(AgentAdapter):
             user_message = await simulator.next_message(ctx.transcript)
             if user_message is None:
                 break
+            user_message = self._with_workspace_guidance(user_message, ctx)
             history = list(ctx.adapter_state.get("conversation_history") or [])
             try:
                 result: dict[str, Any] = await asyncio.wait_for(
