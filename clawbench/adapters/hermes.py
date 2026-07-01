@@ -563,6 +563,7 @@ class HermesAdapter(AgentAdapter):
             user_message = await simulator.next_message(ctx.transcript)
             if user_message is None:
                 break
+            user_message = self._with_workspace_guidance(user_message, ctx)
             history = list(ctx.adapter_state.get("conversation_history") or [])
             try:
                 result: dict[str, Any] = await asyncio.wait_for(
