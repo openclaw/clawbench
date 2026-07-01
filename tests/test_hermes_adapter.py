@@ -240,9 +240,13 @@ def test_run_phase_sends_rendered_prompt_and_parses_conversation(tmp_path: Path)
 
     ctx, result = asyncio.run(_go())
 
-    # The stub runner saw the rendered user message.
+    # The stub runner saw the rendered user message with workspace guidance.
     assert runners
-    assert runners[0].last_prompt == "List the workspace files."
+    assert runners[0].last_prompt is not None
+    assert "List the workspace files." in runners[0].last_prompt
+    assert str(tmp_path) in runners[0].last_prompt
+    assert "Inspect files in this directory first" in runners[0].last_prompt
+    assert "do not search outside the workspace" in runners[0].last_prompt
 
     # Conversation parsed into the shared transcript.
     assert result.error is None
